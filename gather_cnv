@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Resource List
+resources=()
+
+# CNV Namespaces
+resources+=(ns/kubevirt ns/cdi ns/kubevirt-web-ui)
+
+# VM
+resources+=(virtualmachines)
+
+# VMI
+resources+=(virtualmachineinstances virtualmachineinstancereplicasets virtualmachineinstancepresets virtualmachineinstancemigrations)
+
+# v2v
+resources+=(v2vvmwares)
+
+# Run the Collection of Resources using must-gather
+for resource in ${resources[@]}; do
+  /usr/bin/openshift-must-gather inspect --all-namespaces ${resource}
+done
+
+# Collect namespaces that contains VMs
+/usr/bin/gather-cnv-vm-namespaces
+
+# Collect VMs definition
+/usr/bin/gather-cnv-vm-definition
+
+exit 0
