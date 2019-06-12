@@ -3,9 +3,9 @@
 # Resource list
 resources=()
 
-for i in $(/usr/bin/oc get virtualmachines --all-namespaces --no-headers | awk '{print $1}')
+for i in $(/usr/bin/oc get crd | grep kubevirt.io | awk '{print $1}')
 do
-  resources+=(ns/$i)
+  resources+=(crd/$i)
 done
 
 # Run the collection of resources using must-gather

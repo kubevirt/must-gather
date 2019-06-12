@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Resource List
+# Resource list
 resources=()
 
 # CNV HCO related namespaces
@@ -21,15 +21,18 @@ resources+=(virtualmachineinstances virtualmachineinstancereplicasets virtualmac
 # v2v
 resources+=(v2vvmwares)
 
-# Run the Collection of Resources using must-gather
+# Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
   /usr/bin/openshift-must-gather inspect --all-namespaces ${resource}
 done
 
+# Collect the CRDs
+/usr/bin/gather_cnv_crds
+
 # Collect namespaces that contains VMs
-/usr/bin/gather-cnv-vm-namespaces
+/usr/bin/gather_cnv_vm_namespaces
 
 # Collect VMs definition
-/usr/bin/gather-cnv-vm-definition
+/usr/bin/gather_cnv_vm_definition
 
 exit 0
