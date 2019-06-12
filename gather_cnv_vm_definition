@@ -3,7 +3,7 @@ BASE_COLLECTION_PATH="/must-gather"
 VM_DEFINITION_PATH="${BASE_COLLECTION_PATH}/vm_definition/"
 
 mkdir -p ${VM_DEFINITION_PATH}
-for i in $(/usr/bin/oc get pod --all-namespaces -l kubevirt.io=virt-launcher | awk '{print $1 "_" $2}')
+for i in $(/usr/bin/oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
 do
   /usr/bin/oc exec $(echo $i | awk -F_ '{print $2}') -n $(echo $i | awk -F_ '{print $1}') -c compute -- virsh dumpxml $(echo $i | awk -F_ '{print $1}')_$(echo $i | awk -F_ '{print $2}' | cut -d'-' -f3- | sed "s/-[^-]*$//") > ${VM_DEFINITION_PATH}/$i.vm.xml
 done

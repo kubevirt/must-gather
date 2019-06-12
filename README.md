@@ -13,10 +13,11 @@ The command above will create a local directory with a dump of the CNV state.
 Note that this command will only get data related to the CNV part of the OpenShift cluster.
 
 You will get a dump of:
-- The Hyperconverged Cluster Operator namespace (and its children objects)
-- All Control Plane namespaces (and their children objects)
+- The Hyperconverged Cluster Operator namespaces (and its children objects)
 - All namespaces (and their children objects) that belong to any CNV resources
 - All CNV CRD's definitions
+- All namspaces that contains VMs
+- All VMs definition
 
 In order to get data about other parts of the cluster (not specific to CNV) you should
 run `oc adm must-gather` (without passing a custom image). Run `oc adm must-gather -h` to see more options.
