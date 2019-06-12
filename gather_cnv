@@ -3,8 +3,14 @@
 # Resource List
 resources=()
 
-# CNV Namespaces
-resources+=(ns/kubevirt ns/cdi ns/kubevirt-web-ui)
+# CNV HCO related namespaces
+resources+=(ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager)
+
+# CNV network related namespaces
+resources+=(ns/kubemacpool-system ns/linux-bridge ns/openshift-sdn ns/cluster-network-addons-operator)
+
+# CNV Web UI namespaces
+resources+=(ns/kubevirt-web-ui)
 
 # VM
 resources+=(virtualmachines)
