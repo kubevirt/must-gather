@@ -1,0 +1,33 @@
+#!/bin/bash
+BASE_COLLECTION_PATH="/must-gather"
+
+for i in $(/usr/bin/oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
+do
+  ocproject=$(echo $i | awk -F_ '{print $1}')
+  ocvm=$(echo $i | awk -F_ '{print $2}')
+  vm_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms
+  
+  mkdir -p ${vm_collection_path}
+  
+  # VM : dumpxml
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- virsh dumpxml ${ocproject}_$(echo ${ocvm} | cut -d'-' -f3- | sed "s/-[^-]*$//") > ${vm_collection_path}/${ocvm}.dumpxml.xml
+
+  # VM : IP
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- ip a > ${vm_collection_path}/${ocvm}.ip.txt
+  
+  # VM : Bridge
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- bridge fdb show > ${vm_collection_path}/${ocvm}.bridge.txt
+  
+  # VM : iptables
+  echo "###################################" > ${vm_collection_path}/${ocvm}.iptables.txt
+  echo "Filter table:" >> ${vm_collection_path}/${ocvm}.iptables.txt
+  echo "###################################" >> ${vm_collection_path}/${ocvm}.iptables.txt
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- iptables -t filter -L >> ${vm_collection_path}/${ocvm}.iptables.txt
+
+  echo -e "\n\n###################################" >> ${vm_collection_path}/${ocvm}.iptables.txt
+  echo "NAT table:" >> ${vm_collection_path}/${ocvm}.iptables.txt
+  echo "###################################" >> ${vm_collection_path}/${ocvm}.iptables.txt
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- iptables -t nat -L >> ${vm_collection_path}/${ocvm}.iptables.txt  
+done
+
+exit 0

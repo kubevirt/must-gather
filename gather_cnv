@@ -30,9 +30,9 @@ done
 /usr/bin/gather_cnv_crds
 
 # Collect namespaces that contains VMs
-/usr/bin/gather_cnv_vm_namespaces
+/usr/bin/gather_cnv_vms_namespaces
 
-# Collect VMs definition
-/usr/bin/gather_cnv_vm_definition
+# Collect VMs details
+/usr/bin/gather_cnv_vms_details
 
 exit 0
