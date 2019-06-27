@@ -35,4 +35,7 @@ done
 # Collect VMs details
 /usr/bin/gather_cnv_vms_details
 
+# Collect SSP details
+/usr/bin/gather_cnv_ssp
+
 exit 0
