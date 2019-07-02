@@ -16,8 +16,21 @@ do
   /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- ip a > ${vm_collection_path}/${ocvm}.ip.txt
   
   # VM : Bridge
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- bridge fdb show > ${vm_collection_path}/${ocvm}.bridge.txt
+  echo "###################################" > ${vm_collection_path}/${ocvm}.bridge.txt
+  echo "brctl show:" >> ${vm_collection_path}/${ocvm}.bridge.txt
+  echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- brctl show >> ${vm_collection_path}/${ocvm}.bridge.txt
+
+  echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
+  echo "bridge fdb show:" >> ${vm_collection_path}/${ocvm}.bridge.txt
+  echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- bridge fdb show >> ${vm_collection_path}/${ocvm}.bridge.txt
   
+  echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
+  echo "bridge vlan show:" >> ${vm_collection_path}/${ocvm}.bridge.txt  
+  echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- bridge vlan show >> ${vm_collection_path}/${ocvm}.bridge.txt
+
   # VM : iptables
   echo "###################################" > ${vm_collection_path}/${ocvm}.iptables.txt
   echo "Filter table:" >> ${vm_collection_path}/${ocvm}.iptables.txt
