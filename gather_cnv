@@ -21,6 +21,10 @@ resources+=(virtualmachineinstances virtualmachineinstancereplicasets virtualmac
 # v2v
 resources+=(v2vvmwares)
 
+resources+=(Network-attachment-definitions)
+
+resources+=(networkaddonsconfig)
+
 # Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
   /usr/bin/openshift-must-gather inspect --all-namespaces ${resource}
