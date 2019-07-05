@@ -1,0 +1,24 @@
+#!/bin/bash
+
+BASE_COLLECTION_PATH="/must-gather"
+
+NETWORK_NAMESPACES=(cluster-network-addons-operator kubemacpool-system linux-bridge nmstate sriov)
+
+for ns in ${NETWORK_NAMESPACES[@]}
+do
+    check_ns=$(oc get namespace $ns --no-headers -o=custom-columns=NAME:.metadata.name 2> /dev/null)
+    if [ -z "${check_ns}" ]; then
+        continue
+    fi
+
+    ns_collection_path=${BASE_COLLECTION_PATH}/namespaces/$ns/
+    mkdir -p ${ns_collection_path}
+
+    NS_PODS=$(oc get pods -n $ns  --no-headers -o=custom-columns=NAME:.metadata.name)
+    for pod in $NS_PODS
+    do
+        echo "POD: $pod"
+        /usr/bin/openshift-must-gather inspect -n $ns pod/${pod}
+        oc logs ${pod} -n $ns > $ns_collection_path/$pod.log
+    done
+done
