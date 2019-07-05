@@ -38,4 +38,6 @@ done
 # Collect SSP details
 /usr/bin/gather_cnv_ssp
 
+# Collect network details
+/usr/bin/gather_cnv_network
 exit 0
