@@ -42,4 +42,7 @@ done
 # Collect SSP details
 /usr/bin/gather_cnv_ssp
 
+# Collect nodes details
+/usr/bin/gather_cnv_nodes
+
 exit 0
