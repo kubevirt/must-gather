@@ -21,6 +21,11 @@ resources+=(virtualmachineinstances virtualmachineinstancereplicasets virtualmac
 # v2v
 resources+=(v2vvmwares)
 
+# CDI
+resources+=(ns/cdi)
+
+resources+=(datavolumes)
+
 # Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
   /usr/bin/openshift-must-gather inspect --all-namespaces ${resource}
@@ -37,5 +42,8 @@ done
 
 # Collect SSP details
 /usr/bin/gather_cnv_ssp
+
+# Collect CDI details
+/usr/bin/gather_cnv_cdi
 
 exit 0
