@@ -21,6 +21,10 @@ resources+=(virtualmachineinstances virtualmachineinstancereplicasets virtualmac
 # v2v
 resources+=(v2vvmwares)
 
+resources+=(Network-attachment-definitions)
+
+resources+=(networkaddonsconfig)
+
 # CDI
 resources+=(ns/cdi)
 
@@ -42,6 +46,12 @@ done
 
 # Collect SSP details
 /usr/bin/gather_cnv_ssp
+
+# Collect network details
+/usr/bin/gather_cnv_network
+
+# Collect nodes details
+/usr/bin/gather_cnv_nodes
 
 # Collect CDI details
 /usr/bin/gather_cnv_cdi
