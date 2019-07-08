@@ -65,4 +65,7 @@ done
 # Collect the webhooks
 /usr/bin/gather_cnv_webhooks
 
+# Collect v2v details
+/usr/bin/gather_cnv_v2v
+
 exit 0
