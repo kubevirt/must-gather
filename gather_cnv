@@ -4,7 +4,7 @@
 resources=()
 
 # CNV HCO related namespaces
-resources+=(ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager)
+resources+=(ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
 
 # CNV network related namespaces
 resources+=(ns/kubemacpool-system ns/linux-bridge ns/openshift-sdn ns/cluster-network-addons-operator)
