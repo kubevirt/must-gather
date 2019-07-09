@@ -25,6 +25,11 @@ resources+=(Network-attachment-definitions)
 
 resources+=(networkaddonsconfig)
 
+# CDI
+resources+=(ns/cdi)
+
+resources+=(datavolumes)
+
 # Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
   /usr/bin/openshift-must-gather inspect --all-namespaces ${resource}
@@ -47,5 +52,8 @@ done
 
 # Collect nodes details
 /usr/bin/gather_cnv_nodes
+
+# Collect CDI details
+/usr/bin/gather_cnv_cdi
 
 exit 0
