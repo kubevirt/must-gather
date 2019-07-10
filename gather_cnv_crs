@@ -1,0 +1,27 @@
+#!/bin/bash
+
+BASE_COLLECTION_PATH="/must-gather"
+
+# Resource list
+resources=()
+
+for i in $(/usr/bin/oc get crd | grep kubevirt.io | awk '{print $1}')
+do
+  resources+=($i)
+done
+
+# we use nested loops to nicely output objects partitioned per namespace, kind
+for resource in ${resources[@]}; do
+   /usr/bin/oc get ${resource} --all-namespaces --no-headers 2> /dev/null | \
+  while read ocresource; do
+    ocproject=$(echo $ocresource | awk '{print $1}')
+    ocobject=$(echo $ocresource | awk '{print $2}')
+    object_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/crs/${resource}
+
+    mkdir -p ${object_collection_path}
+
+    /usr/bin/oc get ${resource} -n ${ocproject} -o yaml ${ocobject} > ${object_collection_path}/${ocobject}.yaml
+  done
+done
+
+exit 0

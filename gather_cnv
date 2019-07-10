@@ -38,6 +38,12 @@ done
 # Collect the CRDs
 /usr/bin/gather_cnv_crds
 
+# Collect the CRs explicitely - some of them, like VMs, are collected by steps below
+/usr/bin/gather_cnv_crs
+
+# Collect the apiservices
+/usr/bin/gather_cnv_apiservices
+
 # Collect namespaces that contains VMs
 /usr/bin/gather_cnv_vms_namespaces
 

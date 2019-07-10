@@ -12,6 +12,10 @@ do
   # VM : dumpxml
   /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- virsh dumpxml ${ocproject}_$(echo ${ocvm} | cut -d'-' -f3- | sed "s/-[^-]*$//") > ${vm_collection_path}/${ocvm}.dumpxml.xml
 
+  # VM : QEMU logs
+  # libvirt logs are already relayed to virt-launcher, and we capture the virt-launcher pod logs elsewhere. We are want the QEMU log here.
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- cat /var/log/libvirt/qemu/${ocproject}_$(echo ${ocvm} | cut -d'-' -f3- | sed "s/-[^-]*$//").log > ${vm_collection_path}/${ocvm}.qemu.log
+
   # VM : IP
   /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- ip a > ${vm_collection_path}/${ocvm}.ip.txt
   
