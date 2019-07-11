@@ -62,4 +62,7 @@ done
 # Collect CDI details
 /usr/bin/gather_cnv_cdi
 
+# Collect the webhooks
+/usr/bin/gather_cnv_webhooks
+
 exit 0
