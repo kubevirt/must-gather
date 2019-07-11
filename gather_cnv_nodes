@@ -34,6 +34,23 @@ do
     mkdir -p ${NODE_PATH}
     oc exec -it $pod -n node-gather -- ip a >> $NODE_PATH/ip.txt
     oc exec -it $pod -n node-gather -- brctl show >> $NODE_PATH/bridge
+
+    for i in $(oc exec -it $pod -n node-gather -- ls /host/sys/bus/pci/devices/);
+    do
+        if [ $(oc exec -it $pod -n node-gather -- test -e /host/sys/bus/pci/devices/$i/sriov_numvfs && echo 1 || echo 0) -eq 1 ];
+        then
+            echo "sriov_numvfs on dev $i: $(oc exec -it $pod -n node-gather -- cat /host/sys/bus/pci/devices/$i/sriov_numvfs)"  >> $NODE_PATH/sys_sriov_numvfs
+        fi
+        if [ $(oc exec -it $pod -n node-gather -- test -e /host/sys/bus/pci/devices/$i/sriov_totalvfs && echo 1 || echo 0) -eq 1 ];
+        then
+            echo "sriov_numvfs on dev $i: $(oc exec -it $pod -n node-gather -- cat /host/sys/bus/pci/devices/$i/sriov_totalvfs)"  >> $NODE_PATH/sys_sriov_totalvfs
+        fi
+    done
+
+    oc exec -it $pod -n node-gather -- ls -al /dev/vfio/ >> $NODE_PATH/dev_vfio
+    oc exec -it $pod -n node-gather -- dmesg >> $NODE_PATH/dmesg
+    oc exec -it $pod -n node-gather -- cat /proc/cmdline >> $NODE_PATH/proc_cmdline
+    oc exec -it $pod -n node-gather -- lspci -vv >> $NODE_PATH/lspci
 done
 
 # Collect journal logs for specified units for all nodes
