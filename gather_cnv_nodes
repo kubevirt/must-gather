@@ -47,9 +47,9 @@ do
         fi
     done
 
-    oc exec -it $pod -n node-gather -- ls -al /dev/vfio/ >> $NODE_PATH/dev_vfio
+    oc exec -it $pod -n node-gather -- ls -al /host/dev/vfio/ >> $NODE_PATH/dev_vfio
     oc exec -it $pod -n node-gather -- dmesg >> $NODE_PATH/dmesg
-    oc exec -it $pod -n node-gather -- cat /proc/cmdline >> $NODE_PATH/proc_cmdline
+    oc exec -it $pod -n node-gather -- cat /host/proc/cmdline >> $NODE_PATH/proc_cmdline
     oc exec -it $pod -n node-gather -- lspci -vv >> $NODE_PATH/lspci
 done
 
