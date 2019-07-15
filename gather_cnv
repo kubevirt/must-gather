@@ -7,7 +7,7 @@ resources=()
 resources+=(ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
 
 # CNV network related namespaces
-resources+=(ns/kubemacpool-system ns/linux-bridge ns/openshift-sdn ns/cluster-network-addons-operator)
+resources+=(ns/kubemacpool-system ns/linux-bridge ns/openshift-sdn ns/cluster-network-addons-operator ns/nmstate ns/sriov)
 
 # CNV Web UI namespaces
 resources+=(ns/kubevirt-web-ui)
@@ -52,9 +52,6 @@ done
 
 # Collect SSP details
 /usr/bin/gather_cnv_ssp
-
-# Collect network details
-/usr/bin/gather_cnv_network
 
 # Collect nodes details
 /usr/bin/gather_cnv_nodes
