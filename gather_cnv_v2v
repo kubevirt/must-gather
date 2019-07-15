@@ -1,0 +1,23 @@
+#!/bin/bash
+
+BASE_COLLECTION_PATH="/must-gather"
+
+for ns in $(oc get namespace --no-headers -o=custom-columns=NAME:.metadata.name 2> /dev/null)
+do
+    ns_collection_path=$BASE_COLLECTION_PATH/namespaces/$ns/
+    mkdir -p $ns_collection_path
+
+    for pod in $(oc get pods -n $ns --no-headers -o=custom-columns=NAME:.metadata.name 2>/dev/null)
+    do
+        if ! expr $pod : 'kubevirt-v2v-conversion-*' >/dev/null
+        then
+            continue
+        fi
+
+        pod_collection_path=$ns_collection_path/$pod
+        mkdir -p $pod_collection_path
+
+        /usr/bin/openshift-must-gather inspect -n $ns pod/$pod
+        oc logs $pod -n $ns > $ns_collection_path/$pod.log
+    done
+done
