@@ -20,7 +20,7 @@ spec:
       hostNetwork: true
       containers:
       - name: node-probe
-        image: quay.io/kubevirt/node-gather
+        image: ${NODE_GATHER_IMAGE_REPO}/node-gather
         command: ["/bin/bash", "-c", "echo ok > /tmp/healthy && sleep INF"]
         imagePullPolicy: IfNotPresent
         resources:

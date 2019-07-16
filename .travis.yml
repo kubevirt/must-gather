@@ -1,0 +1,12 @@
+language: generic
+
+services:
+- docker
+
+jobs:
+  include:
+  - stage: Build
+    name: Build
+    if: tag IS present
+    before_script: skip
+    script: make build "IMAGE_TAG=$TRAVIS_TAG"
