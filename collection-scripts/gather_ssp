@@ -2,7 +2,7 @@
 
 BASE_COLLECTION_PATH="/must-gather"
 
-# we expect the CNV templates to be deployed only in the `opneshift` namespace. But if this turns out not to be true, we need to know.
+# we expect the KubeVirt templates to be deployed only in the `opneshift` namespace. But if this turns out not to be true, we need to know.
 for ocproject in $(/usr/bin/oc get templates --all-namespaces -l 'template.kubevirt.io/type=base' -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' | uniq)
 do
   templates_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/templates

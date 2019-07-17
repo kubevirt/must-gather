@@ -3,13 +3,13 @@
 # Resource list
 resources=()
 
-# CNV HCO related namespaces
+# KubeVirt HCO related namespaces
 resources+=(ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
 
-# CNV network related namespaces
+# KubeVirt network related namespaces
 resources+=(ns/kubemacpool-system ns/linux-bridge ns/openshift-sdn ns/cluster-network-addons-operator ns/nmstate ns/sriov)
 
-# CNV Web UI namespaces
+# KubeVirt Web UI namespaces
 resources+=(ns/kubevirt-web-ui)
 
 # VM
@@ -36,33 +36,33 @@ for resource in ${resources[@]}; do
 done
 
 # Collect the CRDs
-/usr/bin/gather_cnv_crds
+/usr/bin/gather_crds
 
 # Collect the CRs explicitely - some of them, like VMs, are collected by steps below
-/usr/bin/gather_cnv_crs
+/usr/bin/gather_crs
 
 # Collect the apiservices
-/usr/bin/gather_cnv_apiservices
+/usr/bin/gather_apiservices
 
 # Collect namespaces that contains VMs
-/usr/bin/gather_cnv_vms_namespaces
+/usr/bin/gather_vms_namespaces
 
 # Collect VMs details
-/usr/bin/gather_cnv_vms_details
+/usr/bin/gather_vms_details
 
 # Collect SSP details
-/usr/bin/gather_cnv_ssp
+/usr/bin/gather_ssp
 
 # Collect nodes details
-/usr/bin/gather_cnv_nodes
+/usr/bin/gather_nodes
 
 # Collect CDI details
-/usr/bin/gather_cnv_cdi
+/usr/bin/gather_cdi
 
 # Collect the webhooks
-/usr/bin/gather_cnv_webhooks
+/usr/bin/gather_webhooks
 
 # Collect v2v details
-/usr/bin/gather_cnv_v2v
+/usr/bin/gather_v2v
 
 exit 0
