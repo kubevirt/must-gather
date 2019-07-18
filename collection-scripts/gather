@@ -30,6 +30,9 @@ resources+=(ns/cdi)
 
 resources+=(datavolumes)
 
+# NodeNetworkState
+resources+=(nodenetworkstates)
+
 # Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
   /usr/bin/openshift-must-gather inspect --all-namespaces ${resource}
