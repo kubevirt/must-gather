@@ -6,7 +6,7 @@ IMAGE_TAG ?= latest
 build: manifests docker-build docker-push
 
 manifests: 
-	./build/release-manifests.sh ${IMAGE_REGISTRY}
+	./build/release-manifests.sh ${IMAGE_REGISTRY} ${NODE_GATHER_IMAGE}
 
 docker-build: 
 	docker build -t ${IMAGE_REGISTRY}/${MUST_GATHER_IMAGE}:${IMAGE_TAG} .
