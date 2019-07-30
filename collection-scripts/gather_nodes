@@ -34,6 +34,7 @@ do
     mkdir -p ${NODE_PATH}
     oc exec -it $pod -n node-gather -- ip a >> $NODE_PATH/ip.txt
     oc exec -it $pod -n node-gather -- ip -o link show type bridge >> $NODE_PATH/bridge
+    oc exec -it $pod -n node-gather -- bridge -j vlan show >> $NODE_PATH/vlan
 
     for i in $(oc exec -it $pod -n node-gather -- ls /host/sys/bus/pci/devices/);
     do
