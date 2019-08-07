@@ -51,6 +51,7 @@ do
     oc exec -it $pod -n node-gather -- dmesg >> $NODE_PATH/dmesg
     oc exec -it $pod -n node-gather -- cat /host/proc/cmdline >> $NODE_PATH/proc_cmdline
     oc exec -it $pod -n node-gather -- lspci -vv >> $NODE_PATH/lspci
+    oc exec -it $pod -n node-gather -- cat /host/etc/pcidp/config.json >> $NODE_PATH/pcidp_config.json
 done
 
 # Collect journal logs for specified units for all nodes
