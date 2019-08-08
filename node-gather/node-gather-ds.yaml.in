@@ -44,6 +44,10 @@ spec:
             mountPath: /host/proc
           - name: dev
             mountPath: /host/dev
+          - name: etc
+            mountPath: /host/etc
+          - name: opt
+            mountPath: /host/opt
         securityContext:
           privileged: true
       volumes:
@@ -58,4 +62,12 @@ spec:
       - name: dev
         hostPath:
           path: /dev
+          type: Directory
+      - name: etc
+        hostPath:
+          path: /etc
+          type: Directory
+      - name: opt
+        hostPath:
+          path: /opt
           type: Directory
