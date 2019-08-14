@@ -17,15 +17,19 @@
 
 set -e
 
-bridge_marker_image_repo=${1:-quay.io/kubevirt}
-node_image=${2:-node-gather}
+node_image=${1:-node-gather}
+bridge_marker_image_repo=${2}
+separator="/"
 
 cd node-gather
 for template in *.in; do
     name=$(basename ${template%.in})
+    if [ -z $bridge_marker_image_repo ]; then
+        separator=""
+    fi
     sed \
-        -e "s#\${NODE_GATHER_IMAGE_REPO}#${bridge_marker_image_repo}#g" \
         -e "s#\${NODE_GATHER_IMAGE}#${node_image}#g" \
+        -e "s#\${NODE_GATHER_IMAGE_REPO}#${bridge_marker_image_repo}${separator}#g" \
         ${template} > ${name}
 done
 
