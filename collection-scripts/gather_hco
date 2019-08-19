@@ -5,6 +5,7 @@ NS=openshift-cnv
 BASE_COLLECTION_PATH="/must-gather"
 
 {
+  PS4='---\n$ '
   set -x
   mkdir -p $BASE_COLLECTION_PATH
   oc get pods --namespace $NS
