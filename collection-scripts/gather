@@ -41,6 +41,9 @@ for resource in ${resources[@]}; do
   /usr/bin/openshift-must-gather inspect --all-namespaces ${resource}
 done
 
+# Collect HCO details (first, because it's there before anything else)
+/usr/bin/gather_hco
+
 # Collect the CRDs
 /usr/bin/gather_crds
 
