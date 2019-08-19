@@ -33,6 +33,9 @@ resources+=(datavolumes)
 # NodeNetworkState
 resources+=(nodenetworkstates)
 
+# ImageStreamTag
+resources+=(istag)
+
 # Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
   /usr/bin/openshift-must-gather inspect --all-namespaces ${resource}
