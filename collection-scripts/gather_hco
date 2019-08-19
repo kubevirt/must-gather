@@ -1,0 +1,16 @@
+#!/bin/bash
+
+NS=openshift-cnv
+
+BASE_COLLECTION_PATH="/must-gather"
+
+{
+  set -x
+  mkdir -p $BASE_COLLECTION_PATH
+  oc get pods --namespace $NS
+  oc get catalogsource --all-namespaces
+  oc get packagemanifest -n $NS
+  oc get sub -n $NS -o yaml
+  oc get clusterversion
+  oc get installplan -n $NS
+} | tee $BASE_COLLECTION_PATH/gather_hco.txt
