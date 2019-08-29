@@ -1,7 +1,15 @@
-FROM quay.io/openshift/origin-must-gather:latest
+FROM quay.io/openshift/origin-must-gather:latest as builder
+
+FROM centos:7
+
+# For gathering data from nodes
+RUN yum update -y && yum install iproute tcpdump pciutils util-linux nftables -y && yum clean all
+
+COPY --from=builder /usr/bin/openshift-must-gather /usr/bin/openshift-must-gather
+COPY --from=builder /usr/bin/oc /usr/bin/oc
 
 # Save original gather script
-RUN mv /usr/bin/gather /usr/bin/gather_original
+COPY --from=builder /usr/bin/gather /usr/bin/gather_original
 
 # Copy all collection scripts to /usr/bin
 COPY collection-scripts/* /usr/bin/
