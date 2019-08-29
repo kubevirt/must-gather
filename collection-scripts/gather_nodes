@@ -8,6 +8,12 @@ mkdir -p ${NODES_PATH}
 CRD_MANIFEST="/etc/node-gather-crd.yaml"
 DAEMONSET_MANIFEST="/etc/node-gather-ds.yaml"
 
+NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+POD_NAME=$(oc get pod -n $NAMESPACE -o'custom-columns=name:metadata.name' --no-headers)
+MUST_GATHER_IMAGE=$(oc get pod -n $NAMESPACE $POD_NAME -o jsonpath="{.spec.initContainers[0].image}")
+
+sed -i -e "s#MUST_GATHER_IMAGE#$MUST_GATHER_IMAGE#" $DAEMONSET_MANIFEST
+
 oc login -u system:admin
 oc create -f $CRD_MANIFEST
 oc adm policy add-scc-to-user privileged -n node-gather -z node-gather
@@ -18,10 +24,10 @@ do
     line=$(oc get ds node-gather-daemonset -o=custom-columns=DESIRED:.status.desiredNumberScheduled,READY:.status.numberReady --no-headers -n node-gather)
 
     DESIRED=$(echo $line | awk -F ' ' '{print $1}')
-    READY=$(echo $line | awk -F ' ' '{print $2}')    
+    READY=$(echo $line | awk -F ' ' '{print $2}')
     if [[ $READY -eq $DESIRED ]]
     then
-       break 
+       break
     fi
     sleep 1
 done
