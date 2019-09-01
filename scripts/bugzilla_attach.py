@@ -56,6 +56,8 @@ OUTPUT_FILE = "must-gather.log"
 
 ARCHIVE_NAME = "must-gather"
 
+IMAGE = "quay.io/kubevirt/must-gather"
+
 def main():
     """Main function"""
 
@@ -63,10 +65,16 @@ def main():
     parser = argparse.ArgumentParser(description="Sends the result of must-gather to Bugzilla.")
     parser.add_argument("ID", metavar="id", type=int,
                         help="The ID of the bug in Bugzilla")
-
+    parser.add_argument("--image", metavar="image",
+                        help="The image to use for must-gather")
     args = parser.parse_args()
 
     bug_id = args.ID
+
+    if args.image:
+        image = args.image
+    else:
+        image = IMAGE
 
     # If the log folder already exists, delete it
     if os.path.isdir(LOGFOLDER):
@@ -81,7 +89,7 @@ def main():
         print("Running must-gather")
         subprocess.run(
             ["oc", "adm", "must-gather",
-            "--image=quay.io/kubevirt/must-gather", "--dest-dir=" + LOGFOLDER],
+            "--image=" + image, "--dest-dir=" + LOGFOLDER],
             stdout=out_file)
     
     # Recursively walk the log folder
