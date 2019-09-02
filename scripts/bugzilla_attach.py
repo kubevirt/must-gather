@@ -6,6 +6,8 @@ Author: Avram Levitter
 Parameters:
     
     id: The Bugzilla bug ID to send the attachment to
+    image: The image to use (defaults to quay.io/kubevirt/must-gather)
+    api-key: Use a generated API key instead of a username and login
 
 Requirements:
 
@@ -67,6 +69,8 @@ def main():
                         help="The ID of the bug in Bugzilla")
     parser.add_argument("--image", metavar="image",
                         help="The image to use for must-gather")
+    parser.add_argument("--api-key", metavar="api-key",
+                        help="Optional API key instead of username and login (will disable prompts to retry)")
     args = parser.parse_args()
 
     bug_id = args.ID
@@ -75,6 +79,8 @@ def main():
         image = args.image
     else:
         image = IMAGE
+
+    use_api_key = args.api_key != None
 
     # If the log folder already exists, delete it
     if os.path.isdir(LOGFOLDER):
@@ -120,15 +126,22 @@ def main():
     with open(archive_name, "rb") as data_file:
         file_data = base64.b64encode(data_file.read())
 
-    bugzilla_username = input("Enter Bugzilla username: ")
-    bugzilla_password = getpass(prompt="Enter Bugzilla password: ")
 
-    # Send the data to the target URL
-    resp = send_data(bugzilla_username, bugzilla_password, bug_id, file_data)
+    # Send the data to the target URL (depending on whether using API key or not)
+    if use_api_key:
+        resp = send_data_with_api_key(args.api_key, bug_id, file_data)
+    else:
+        bugzilla_username = input("Enter Bugzilla username: ")
+        bugzilla_password = getpass(prompt="Enter Bugzilla password: ")
+        resp = send_data(bugzilla_username, bugzilla_password, bug_id, file_data)
     resp_json = resp.json()
 
     # Handle the potential errors
     while "error" in resp_json:
+        # Using an api key will disable retries, so just output the error message
+        if use_api_key:
+            print(resp_json["message"])
+            break
         # 300: invalid username or password
         if resp_json["code"] == 300:
             print("Incorrect username or password.")
@@ -172,6 +185,18 @@ def send_data(username, password, bug_id, file_data):
     data = {
         "login": username,
         "password": password,
+        "ids": [bug_id],
+        "summary": "Result from must-gather command",
+        "content_type": "application/gzip",
+        "data": file_data
+    }
+    return requests.post(url, json=data, headers=HEADERS)
+
+def send_data_with_api_key(api_key, bug_id, file_data):
+    """Sends the data but uses an API key instead of a username and password"""
+    url = BUGZILLA_URL + 'rest/bug/%s/attachment' % bug_id
+    data = {
+        "api_key": api_key,
         "ids": [bug_id],
         "summary": "Result from must-gather command",
         "content_type": "application/gzip",
