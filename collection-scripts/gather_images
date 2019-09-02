@@ -1,0 +1,34 @@
+#!/bin/bash
+
+IFS=$'\n'
+
+BASE_COLLECTION_PATH="/must-gather"
+
+IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources/images
+NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
+
+for name in $(oc get image -o=custom-columns=NAME:.metadata.name --no-headers)
+do
+    oc get image $name -o yaml >> ${IMAGES_PATH}
+    echo '---------------' >> ${IMAGES_PATH}
+done
+
+for line in $(oc get imagestreams -o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers --all-namespaces)
+do
+    IFS=$' '
+    read namespace name <<< $line
+    IFS=$'\n'
+    mkdir -p ${NAMESPACE_PATH}/${namespace}
+    oc get imagestream ${name} -n ${namespace} -o yaml >> ${NAMESPACE_PATH}/${namespace}/imagestreams
+    echo '---------------' >> ${NAMESPACE_PATH}/${namespace}/imagestreams
+done
+
+for line in $(oc get imagestreamtags -o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers --all-namespaces)
+do
+    IFS=$' '
+    read namespace name <<< $line
+    IFS=$'\n'
+    mkdir -p ${NAMESPACE_PATH}/${namespace}
+    oc get imagestreamtag ${name} -n ${namespace} -o yaml >> ${NAMESPACE_PATH}/${namespace}/imagestreamtags
+    echo '---------------' >> ${NAMESPACE_PATH}/${namespace}/imagestreamtags
+done
