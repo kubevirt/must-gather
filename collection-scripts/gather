@@ -71,4 +71,8 @@ done
 # Collect v2v details
 /usr/bin/gather_v2v
 
+# Collect image details
+# Workaround for: https://github.com/openshift/must-gather/issues/122
+/usr/bin/gather_images
+
 exit 0
