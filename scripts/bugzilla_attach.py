@@ -236,7 +236,7 @@ def check_bug_exists(bug_id):
 
 def get_lines(file):
     """Gets the number of lines in the file handle"""
-    return sum(1 for line in file)
+    return len(file.readlines())
 
 def trim_file(file, num_lines):
     """Trims the file handle to the number of lines"""
