@@ -1,18 +1,17 @@
 #!/bin/python3
 
 """
-Author: Avram Levitter
-
 Parameters:
     
     id: The Bugzilla bug ID to send the attachment to
     image: The image to use (defaults to quay.io/kubevirt/must-gather)
     api-key: Use a generated API key instead of a username and login
+    log-folder: Use a specific folder for storing the output of must-gather
 
 Requirements:
 
-    Openshift 4.1
-    Python 3.6
+    Openshift 4.1+
+    Python 3.6+
     A Bugzilla account for www.bugzilla.redhat.com
 
 This script attaches the result of the must-gather command, as executed
@@ -48,7 +47,7 @@ import requests
 
 MAX_LOGLINES = 100000
 
-BUGZILLA_URL = "https://www.bugzilla.redhat.com"
+BUGZILLA_URL = "https://bugzilla.redhat.com"
 
 HEADERS = {'Content-type': 'application/json'}
 
@@ -71,46 +70,40 @@ def main():
                         help="The image to use for must-gather")
     parser.add_argument("--api-key", metavar="api-key",
                         help="Optional API key instead of username and login (will disable prompts to retry)")
+    parser.add_argument("--log-folder", metavar="log-folder",
+                        help="Optional destination for the must-gather output (defaults to creating gather-files/ in the local directory)")
+    parser.add_argument("-r", "--reuse-must-gather", action="store_true",
+                        help="Use this to skip rerunning must-gather and just attach what is already gathered")
     args = parser.parse_args()
 
     bug_id = args.ID
 
+    if not check_bug_exists(bug_id):
+        print("Bug not found in Bugzilla")
+        exit(1)
+
+    # If an image is supplied, use that, if not, use the default
     if args.image:
         image = args.image
     else:
         image = IMAGE
 
+    # If a folder is supplied, use that, otherwise use the default in the local folder
+    if args.log_folder:
+        logfolder = args.log_folder
+    else:
+        logfolder = LOGFOLDER
+
+    # If there is no API key provided, prompt for a login
     use_api_key = args.api_key != None
+    if not use_api_key:
+        bugzilla_username = input("Enter Bugzilla username: ")
+        bugzilla_password = getpass(prompt="Enter Bugzilla password: ")
 
-    # If the log folder already exists, delete it
-    if os.path.isdir(LOGFOLDER):
-        shutil.rmtree(LOGFOLDER)
-
-    # Make a new log folder
-    os.mkdir(LOGFOLDER)
-
-    # Open the output file
-    with open(LOGFOLDER + OUTPUT_FILE, "w+") as out_file:
-        # Run oc adm must-gather with the appropriate image and dest-dir
-        print("Running must-gather")
-        subprocess.run(
-            ["oc", "adm", "must-gather",
-            "--image=" + image, "--dest-dir=" + LOGFOLDER],
-            stdout=out_file)
-    
-    # Recursively walk the log folder
-    print("Searching for files to trim")
-    for subdir, _, files in os.walk(LOGFOLDER):
-        for file in files:
-            file_name = os.path.join(subdir, file)
-            with open(file_name, "r+") as curr_file:
-                # Check the number of lines in each file
-                num_lines = get_lines(curr_file)
-                if num_lines > MAX_LOGLINES:
-                    # If the maximum number of lines is too high, trim it
-                    print("Trimming %s because it exceeds %d lines"
-                        % (os.path.join(subdir, file), MAX_LOGLINES))
-                    trim_file(curr_file, MAX_LOGLINES)
+    if not args.reuse_must_gather:
+        run_must_gather(image, logfolder)
+    else:
+        print("Using must-gather results located in %s." % logfolder)
 
     # Create a time-stamped archive name
     archive_name = ARCHIVE_NAME + "%s.tar.gz" % datetime.datetime.now().strftime("Y-%m-%d_%H-%M-%S")
@@ -118,21 +111,19 @@ def main():
     # Add all the files in the log folder to a new archive file
     with tarfile.open(archive_name, "w:gz") as tar:
         print("Creating archive: " + archive_name)
-        tar.add(LOGFOLDER, arcname=os.path.basename(LOGFOLDER))
+        tar.add(logfolder, arcname=os.path.basename(logfolder))
 
     print("Preparing to send the data to " + BUGZILLA_URL)
 
     file_data = ""
     with open(archive_name, "rb") as data_file:
-        file_data = base64.b64encode(data_file.read())
+        file_data = base64.b64encode(data_file.read()).decode()
 
 
     # Send the data to the target URL (depending on whether using API key or not)
     if use_api_key:
         resp = send_data_with_api_key(args.api_key, bug_id, file_data)
     else:
-        bugzilla_username = input("Enter Bugzilla username: ")
-        bugzilla_password = getpass(prompt="Enter Bugzilla password: ")
         resp = send_data(bugzilla_username, bugzilla_password, bug_id, file_data)
     resp_json = resp.json()
 
@@ -148,7 +139,7 @@ def main():
             bugzilla_username = input("Username (leave blank to exit): ")
             if bugzilla_username == "":
                 print("Username left blank, exiting")
-                exit()
+                exit(0)
             bugzilla_password = getpass(prompt="Password: ")
             resp = send_data(bugzilla_username, bugzilla_password, bug_id, file_data)
             resp_json = resp.json()
@@ -158,7 +149,7 @@ def main():
             new_bug_id = input("Enter a new bug id (leave blank to exit): ")
             if new_bug_id == "":
                 print("ID left blank, exiting")
-                exit()
+                exit(0)
             bug_id, valid = try_parse_int(new_bug_id)
             # Try and see if the new supplied ID is a positive integer
             while not valid or bug_id <= 0:
@@ -166,10 +157,44 @@ def main():
                 new_bug_id = input("Enter a new bug id (leave blank to exit): ")
                 if new_bug_id == "":
                     print("ID left blank, exiting")
-                    exit()
+                    exit(0)
                 bug_id, valid = try_parse_int(new_bug_id)
             resp = send_data(bugzilla_username, bugzilla_password, bug_id, file_data)
             resp_json = resp.json()
+
+def run_must_gather(image, logfolder):
+    # If the log folder already exists, delete it
+    if os.path.isdir(logfolder):
+        shutil.rmtree(logfolder)
+
+    # Make a new log folder
+    os.mkdir(logfolder)
+
+    # Open the output file
+    with open(logfolder + OUTPUT_FILE, "w+") as out_file:
+        # Run oc adm must-gather with the appropriate image and dest-dir
+        print("Running must-gather")
+        try:
+            subprocess.run(
+                ["oc", "adm", "must-gather",
+                "--image=" + image, "--dest-dir=" + logfolder],
+                stdout=out_file, check=True)
+        except subprocess.CalledProcessError:
+            exit(1)
+
+    # Recursively walk the log folder
+    print("Searching for files to trim")
+    for subdir, _, files in os.walk(logfolder):
+        for file in files:
+            file_name = os.path.join(subdir, file)
+            with open(file_name, "r+") as curr_file:
+                # Check the number of lines in each file
+                num_lines = get_lines(curr_file)
+                if num_lines > MAX_LOGLINES:
+                    # If the maximum number of lines is too high, trim it
+                    print("Trimming %s because it exceeds %d lines"
+                        % (os.path.join(subdir, file), MAX_LOGLINES))
+                    trim_file(curr_file, MAX_LOGLINES)
 
 
 def try_parse_int(value):
@@ -181,7 +206,7 @@ def try_parse_int(value):
 
 def send_data(username, password, bug_id, file_data):
     """Sends the data to the Bugzilla URL as an attachment"""
-    url = BUGZILLA_URL + 'rest/bug/%s/attachment' % bug_id
+    url = BUGZILLA_URL + '/rest/bug/%s/attachment' % bug_id
     data = {
         "login": username,
         "password": password,
@@ -194,7 +219,7 @@ def send_data(username, password, bug_id, file_data):
 
 def send_data_with_api_key(api_key, bug_id, file_data):
     """Sends the data but uses an API key instead of a username and password"""
-    url = BUGZILLA_URL + 'rest/bug/%s/attachment' % bug_id
+    url = BUGZILLA_URL + '/rest/bug/%s/attachment' % bug_id
     data = {
         "api_key": api_key,
         "ids": [bug_id],
@@ -203,6 +228,11 @@ def send_data_with_api_key(api_key, bug_id, file_data):
         "data": file_data
     }
     return requests.post(url, json=data, headers=HEADERS)
+
+def check_bug_exists(bug_id):
+    """Checks whether the bug exists in Bugzilla"""
+    url = BUGZILLA_URL + '/rest/bug/%s' % bug_id
+    return "error" not in requests.get(url).json()
 
 def get_lines(file):
     """Gets the number of lines in the file handle"""
