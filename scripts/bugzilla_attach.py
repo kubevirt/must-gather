@@ -99,7 +99,7 @@ def main():
     else:
         logfolder = LOGFOLDER
 
-    api_key = os.environ['BUGZILLA_API_KEY']
+    api_key = os.environ.get('BUGZILLA_API_KEY', "")
 
     if args.api_key:
         api_key = args.api_key
@@ -131,7 +131,7 @@ def main():
         tar.add(logfolder, arcname=os.path.basename(logfolder), filter=filter_hidden)
 
     # Now that the archive is created, move the files back in place of the trimmed versions
-    for subdir, _, files in os.walk("/tmp/" + logfolder):
+    for subdir, _, files in os.walk(logfolder):
         for file in files:
             # If the file is hidden, it was a trimmed file so restore it
             if file[0] == ".":
@@ -148,9 +148,10 @@ def main():
 
     # Send the data to the target URL (depending on whether using API key or not)
     if use_api_key:
-        resp = send_data_with_api_key(api_key, bug_id, archive_name, file_data, comment)
+        authentication = {"api_key": api_key}
     else:
-        resp = send_data(bugzilla_username, bugzilla_password, bug_id, archive_name, file_data, comment)
+        authentication = {"username": bugzilla_username, "password:": bugzilla_password}
+    resp = send_data(bug_id, archive_name, file_data, comment, authentication)
     resp_json = resp.json()
 
     # Handle the potential errors
@@ -167,7 +168,8 @@ def main():
                 print("Username left blank, exiting")
                 exit(0)
             bugzilla_password = getpass(prompt="Password: ")
-            resp = send_data(bugzilla_username, bugzilla_password, bug_id, archive_name, file_data, comment)
+            authentication = {"username": bugzilla_username, "password:": bugzilla_password}
+            resp = send_data(bug_id, archive_name, file_data, comment, authentication)
             resp_json = resp.json()
         # 101: Invalid bug id
         elif resp_json["code"] == 101:
@@ -185,7 +187,7 @@ def main():
                     print("ID left blank, exiting")
                     exit(0)
                 bug_id, valid = try_parse_int(new_bug_id)
-            resp = send_data(bugzilla_username, bugzilla_password, bug_id, archive_name, file_data, comment)
+            resp = send_data(bug_id, archive_name, file_data, comment, authentication)
             resp_json = resp.json()
         else:
             print("Error: " + resp_json["message"])
@@ -239,12 +241,12 @@ def try_parse_int(value):
     except ValueError:
         return value, False
 
-def send_data(username, password, bug_id, file_name, file_data, comment):
-    """Sends the data to the Bugzilla URL as an attachment"""
+
+
+def send_data(bug_id, file_name, file_data, comment, authentication):
     url = BUGZILLA_URL + '/rest/bug/%s/attachment' % bug_id
     data = {
-        "login": username,
-        "password": password,
+        **authentication,
         "ids": [bug_id],
         "comment": comment,
         "summary": "Result from must-gather command",
@@ -254,19 +256,6 @@ def send_data(username, password, bug_id, file_name, file_data, comment):
     }
     return requests.post(url, json=data, headers=HEADERS)
 
-def send_data_with_api_key(api_key, bug_id, file_name, file_data, comment):
-    """Sends the data but uses an API key instead of a username and password"""
-    url = BUGZILLA_URL + '/rest/bug/%s/attachment' % bug_id
-    data = {
-        "api_key": api_key,
-        "ids": [bug_id],
-        "comment": comment,
-        "summary": "Result from must-gather command",
-        "content_type": "application/gzip",
-        "file_name": file_name,
-        "data": file_data
-    }
-    return requests.post(url, json=data, headers=HEADERS)
 
 def check_bug_exists(bug_id):
     """Checks whether the bug exists in Bugzilla"""
