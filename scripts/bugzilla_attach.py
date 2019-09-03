@@ -124,9 +124,9 @@ def main():
 
     # Send the data to the target URL (depending on whether using API key or not)
     if use_api_key:
-        resp = send_data_with_api_key(args.api_key, bug_id, file_data)
+        resp = send_data_with_api_key(args.api_key, bug_id, archive_name, file_data)
     else:
-        resp = send_data(bugzilla_username, bugzilla_password, bug_id, file_data)
+        resp = send_data(bugzilla_username, bugzilla_password, bug_id, archive_name, file_data)
     resp_json = resp.json()
 
     # Handle the potential errors
@@ -143,7 +143,7 @@ def main():
                 print("Username left blank, exiting")
                 exit(0)
             bugzilla_password = getpass(prompt="Password: ")
-            resp = send_data(bugzilla_username, bugzilla_password, bug_id, file_data)
+            resp = send_data(bugzilla_username, bugzilla_password, bug_id, archive_name, file_data)
             resp_json = resp.json()
         # 101: Invalid bug id
         elif resp_json["code"] == 101:
@@ -161,8 +161,12 @@ def main():
                     print("ID left blank, exiting")
                     exit(0)
                 bug_id, valid = try_parse_int(new_bug_id)
-            resp = send_data(bugzilla_username, bugzilla_password, bug_id, file_data)
+            resp = send_data(bugzilla_username, bugzilla_password, bug_id, archive_name, file_data)
             resp_json = resp.json()
+        else:
+            print("Error: " + resp_json["message"])
+            exit(1)
+    print("File successfully uploaded to Bugzilla")
 
 def run_must_gather(image, logfolder):
     # If the log folder already exists, delete it
@@ -207,7 +211,7 @@ def try_parse_int(value):
     except ValueError:
         return value, False
 
-def send_data(username, password, bug_id, file_data):
+def send_data(username, password, bug_id, file_name, file_data):
     """Sends the data to the Bugzilla URL as an attachment"""
     url = BUGZILLA_URL + '/rest/bug/%s/attachment' % bug_id
     data = {
@@ -216,11 +220,12 @@ def send_data(username, password, bug_id, file_data):
         "ids": [bug_id],
         "summary": "Result from must-gather command",
         "content_type": "application/gzip",
+        "file_name": file_name,
         "data": file_data
     }
     return requests.post(url, json=data, headers=HEADERS)
 
-def send_data_with_api_key(api_key, bug_id, file_data):
+def send_data_with_api_key(api_key, bug_id, file_name, file_data):
     """Sends the data but uses an API key instead of a username and password"""
     url = BUGZILLA_URL + '/rest/bug/%s/attachment' % bug_id
     data = {
@@ -228,6 +233,7 @@ def send_data_with_api_key(api_key, bug_id, file_data):
         "ids": [bug_id],
         "summary": "Result from must-gather command",
         "content_type": "application/gzip",
+        "file_name": file_name,
         "data": file_data
     }
     return requests.post(url, json=data, headers=HEADERS)
