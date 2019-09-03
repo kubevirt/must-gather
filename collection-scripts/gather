@@ -12,6 +12,9 @@ resources+=(ns/kubemacpool-system ns/linux-bridge ns/openshift-sdn ns/cluster-ne
 # KubeVirt Web UI namespaces
 resources+=(ns/kubevirt-web-ui)
 
+# HCO
+resources+=(catalogsource clusterserviceversion)
+
 # VM
 resources+=(virtualmachines)
 
