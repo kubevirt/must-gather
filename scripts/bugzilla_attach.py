@@ -119,13 +119,24 @@ def main():
     else:
         print("Using must-gather results located in %s." % logfolder)
 
-    # Create a time-stamped archive name
-    archive_name = ARCHIVE_NAME + "%s.tar.gz" % datetime.datetime.now().strftime("Y-%m-%d_%H-%M-%S")
+    # Recursively walk the log folder and trim large files
+    find_trim_files(logfolder)
 
-    # Add all the files in the log folder to a new archive file
+    # Create a time-stamped archive name
+    archive_name = ARCHIVE_NAME + "-%s.tar.gz" % datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Add all the files in the log folder to a new archive file, except for the hidden ones
     with tarfile.open(archive_name, "w:gz") as tar:
         print("Creating archive: " + archive_name)
-        tar.add(logfolder, arcname=os.path.basename(logfolder))
+        tar.add(logfolder, arcname=os.path.basename(logfolder), filter=filter_hidden)
+
+    # Now that the archive is created, move the files back in place of the trimmed versions
+    for subdir, _, files in os.walk("/tmp/" + logfolder):
+        for file in files:
+            # If the file is hidden, it was a trimmed file so restore it
+            if file[0] == ".":
+                shutil.move(subdir + file, subdir + file[1:])
+
 
     print("Preparing to send the data to " + BUGZILLA_URL)
 
@@ -201,6 +212,8 @@ def run_must_gather(image, logfolder):
         except subprocess.CalledProcessError:
             exit(1)
 
+
+def find_trim_files(logfolder):
     # Recursively walk the log folder
     print("Searching for files to trim")
     for subdir, _, files in os.walk(logfolder):
@@ -212,6 +225,8 @@ def run_must_gather(image, logfolder):
                 num_lines = get_lines(curr_file)
                 if num_lines > MAX_LOGLINES:
                     # If the maximum number of lines is too high, trim it
+                    # Copy it so that the original can be replaced
+                    shutil.copyfile(file_name, os.path.join(subdir, "." + file))
                     print("Trimming %s because it exceeds %d lines"
                         % (os.path.join(subdir, file), MAX_LOGLINES))
                     trim_file(curr_file, MAX_LOGLINES)
@@ -274,9 +289,14 @@ def trim_file(file, num_lines):
         file.write("%s\n" % line)
 
 def generate_comment(image):
+    """Creates the comment text for the attachment"""
     comment = ""
     comment += "Result from running oc adm must-gather --image=%s\n" % image
     comment += "Any file that exceeded %s lines was trimmed in order to reduce the size of the attachment\n" % MAX_LOGLINES
     return comment
+
+def filter_hidden(filename):
+    """Filters out hidden files so that the untrimmed ones won't be added to the archive"""
+    return filename if os.path.split(filename.name)[1][0] != "." else None
 
 main()
