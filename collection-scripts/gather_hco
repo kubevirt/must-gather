@@ -13,5 +13,6 @@ BASE_COLLECTION_PATH="/must-gather"
   oc get packagemanifest -n $NS
   oc get sub -n $NS -o yaml
   oc get clusterversion
+  oc get csv --all-namespaces
   oc get installplan -n $NS
 } | tee $BASE_COLLECTION_PATH/gather_hco.txt
