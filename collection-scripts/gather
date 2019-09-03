@@ -4,7 +4,7 @@
 resources=()
 
 # KubeVirt HCO related namespaces
-resources+=(ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
+resources+=(ns/openshift-cnv ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
 
 # KubeVirt network related namespaces
 resources+=(ns/kubemacpool-system ns/linux-bridge ns/openshift-sdn ns/cluster-network-addons-operator ns/nmstate ns/sriov)
