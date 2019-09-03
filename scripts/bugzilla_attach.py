@@ -45,6 +45,8 @@ import base64
 from getpass import getpass
 import requests
 
+# 100,000 lines gives a pre-compressed size of ~40MB and a compressed size of ~4MB
+# Without trimming large files, the compressed output can exceed 40MB
 MAX_LOGLINES = 100000
 
 BUGZILLA_URL = "https://bugzilla.redhat.com"
@@ -189,6 +191,7 @@ def run_must_gather(image, logfolder):
             file_name = os.path.join(subdir, file)
             with open(file_name, "r+") as curr_file:
                 # Check the number of lines in each file
+                # Even after compression, files that are too long will cause the attachment to exceed 19.5MB
                 num_lines = get_lines(curr_file)
                 if num_lines > MAX_LOGLINES:
                     # If the maximum number of lines is too high, trim it
