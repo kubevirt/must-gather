@@ -72,7 +72,7 @@ def main():
     parser.add_argument("--image", metavar="image",
                         help="The image to use for must-gather")
     parser.add_argument("--api-key", metavar="api-key",
-                        help="Optional API key instead of username and login (will disable prompts to retry)")
+                        help="Optional API key instead of username and login (will disable prompts to retry). Can also be set using BUGZILLA_API_KEY environment variable")
     parser.add_argument("--log-folder", metavar="log-folder",
                         help="Optional destination for the must-gather output (defaults to creating gather-files/ in the local directory)")
     parser.add_argument("-r", "--reuse-must-gather", action="store_true",
@@ -275,8 +275,8 @@ def trim_file(file, num_lines):
 
 def generate_comment(image):
     comment = ""
-    comment += "Result from running oc adm must-gather --image=" + image
-    comment += "Any file that exceeded %s lines was trimmed in order to reduce the size of the attachment" % MAX_LOGLINES
+    comment += "Result from running oc adm must-gather --image=%s\n" % image
+    comment += "Any file that exceeded %s lines was trimmed in order to reduce the size of the attachment\n" % MAX_LOGLINES
     return comment
 
 main()
