@@ -48,6 +48,8 @@ spec:
             mountPath: /host/etc
           - name: opt
             mountPath: /host/opt
+          - name: var
+            mountPath: /host/var            
         securityContext:
           privileged: true
       volumes:
@@ -71,3 +73,8 @@ spec:
         hostPath:
           path: /opt
           type: Directory
+      - name: var
+        hostPath:
+          path: /var
+          type: Directory
+
