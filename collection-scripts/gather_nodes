@@ -66,15 +66,22 @@ do
         oc exec -it $pod -n node-gather -- ls -l /host/opt/cni/bin > "${NODE_PATH}/opt-cni-bin"
     fi
 
-    oc exec -it $pod -n node-gather -- [ -d /host/etc/cni/net.d ]
+    oc exec -it $pod -n node-gather -- [ -d /var/lib/cni/bin ]
     if [[ $? -eq 0 ]]; then
-        CNI_COFIG_PATH=${NODE_PATH}/etc/cni/net.d
-        mkdir -p ${CNI_COFIG_PATH}
-        for i in $(oc exec -it $pod -n node-gather -- ls /host/etc/cni/net.d)
-        do
-            oc exec -it $pod -n node-gather -- cat /host/etc/cni/net.d/$i > "$CNI_COFIG_PATH/$i"
-        done
+        oc exec -it $pod -n node-gather -- ls -l /var/lib/cni/bin > "${NODE_PATH}/var-lib-cni-bin"
     fi
+
+    config_dirs=(etc/cni/net.d etc/kubernetes/cni/net.d)
+    IFS=$' '
+    for conf_dir in ${config_dirs[@]}; do
+        oc exec -it $pod -n node-gather -- [ -d /host/$conf_dir ]
+        if [[ $? -eq 0 ]]; then
+            CNI_COFIG_PATH=${NODE_PATH}/$conf_dir
+            mkdir -p ${CNI_COFIG_PATH}
+            oc cp $pod:/host/$conf_dir ${CNI_COFIG_PATH} -n node-gather
+    fi
+    done
+    IFS=$'\n'
 
     oc exec -it $pod -n node-gather -- ls -al /host/dev/vfio/ >> $NODE_PATH/dev_vfio
     oc exec -it $pod -n node-gather -- dmesg >> $NODE_PATH/dmesg
