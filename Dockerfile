@@ -3,7 +3,7 @@ FROM quay.io/openshift/origin-must-gather:latest as builder
 FROM centos:7
 
 # For gathering data from nodes
-RUN yum update -y && yum install iproute tcpdump pciutils util-linux nftables -y && yum clean all
+RUN yum update -y && yum install iproute tcpdump pciutils util-linux nftables rsync -y && yum clean all
 
 COPY --from=builder /usr/bin/openshift-must-gather /usr/bin/openshift-must-gather
 COPY --from=builder /usr/bin/oc /usr/bin/oc
