@@ -14,7 +14,6 @@ MUST_GATHER_IMAGE=$(oc get pod -n $NAMESPACE $POD_NAME -o jsonpath="{.spec.initC
 
 sed -i -e "s#MUST_GATHER_IMAGE#$MUST_GATHER_IMAGE#" $DAEMONSET_MANIFEST
 
-oc login -u system:admin
 oc create -f $CRD_MANIFEST
 oc adm policy add-scc-to-user privileged -n node-gather -z node-gather
 oc create -f $DAEMONSET_MANIFEST
