@@ -7,7 +7,7 @@ resources=()
 resources+=(ns/openshift-cnv ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
 
 # KubeVirt network related namespaces
-resources+=(ns/cluster-network-addons ns/openshift-sdn ns/sriov)
+resources+=(ns/cluster-network-addons ns/openshift-sdn ns/sriov-network-operator)
 
 # KubeVirt Web UI namespaces
 resources+=(ns/kubevirt-web-ui)
