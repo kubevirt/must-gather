@@ -35,45 +35,45 @@ for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.na
 do
     node=$(echo $line | awk -F ' ' '{print $1}')
     pod=$(echo $line | awk -F ' ' '{print $2}')
-    NODE_PATH=${NODES_PATH}/$node/
+    NODE_PATH=${NODES_PATH}/$node
     mkdir -p ${NODE_PATH}
-    oc exec -it $pod -n node-gather -- ip a >> $NODE_PATH/ip.txt
-    oc exec -it $pod -n node-gather -- ip -o link show type bridge >> $NODE_PATH/bridge
-    oc exec -it $pod -n node-gather -- bridge -j vlan show >> $NODE_PATH/vlan
+    oc exec $pod -n node-gather -- ip a 2>/dev/null >> $NODE_PATH/ip.txt
+    oc exec $pod -n node-gather -- ip -o link show type bridge 2>/dev/null >> $NODE_PATH/bridge
+    oc exec $pod -n node-gather -- bridge -j vlan show 2>/dev/null >> $NODE_PATH/vlan
 
-    for i in $(oc exec -it $pod -n node-gather -- nft list tables );
+    for i in $(oc exec $pod -n node-gather -- nft list tables );
     do
         family=`echo $i | awk -F ' ' '{print $2}' | sed 's/\r//'`
         table=`echo $i | awk -F ' ' '{print $3}' | sed 's/\r//'`
-        oc exec -it $pod -n node-gather -- nft list table $family $table > "$NODE_PATH/nft-${family}-${table}"
+        oc exec $pod -n node-gather -- nft list table $family $table 2>/dev/null > "$NODE_PATH/nft-${family}-${table}"
     done
 
-    for i in $(oc exec -it $pod -n node-gather -- ls /host/sys/bus/pci/devices/);
+    for i in $(oc exec $pod -n node-gather -- ls /host/sys/bus/pci/devices/ 2>/dev/null);
     do
-        if [ $(oc exec -it $pod -n node-gather -- test -e /host/sys/bus/pci/devices/$i/sriov_numvfs && echo 1 || echo 0) -eq 1 ];
+        if [ $(oc exec $pod -n node-gather -- test -e /host/sys/bus/pci/devices/$i/sriov_numvfs 2>/dev/null && echo 1 || echo 0) -eq 1 ];
         then
-            echo "sriov_numvfs on dev $i: $(oc exec -it $pod -n node-gather -- cat /host/sys/bus/pci/devices/$i/sriov_numvfs)"  >> $NODE_PATH/sys_sriov_numvfs
+            echo "sriov_numvfs on dev $i: $(oc exec $pod -n node-gather -- cat /host/sys/bus/pci/devices/$i/sriov_numvfs 2>/dev/null)"  >> $NODE_PATH/sys_sriov_numvfs
         fi
-        if [ $(oc exec -it $pod -n node-gather -- test -e /host/sys/bus/pci/devices/$i/sriov_totalvfs && echo 1 || echo 0) -eq 1 ];
+        if [ $(oc exec $pod -n node-gather -- test -e /host/sys/bus/pci/devices/$i/sriov_totalvfs 2>/dev/null && echo 1 || echo 0) -eq 1 ];
         then
-            echo "sriov_numvfs on dev $i: $(oc exec -it $pod -n node-gather -- cat /host/sys/bus/pci/devices/$i/sriov_totalvfs)"  >> $NODE_PATH/sys_sriov_totalvfs
+            echo "sriov_numvfs on dev $i: $(oc exec $pod -n node-gather -- cat /host/sys/bus/pci/devices/$i/sriov_totalvfs 2>/dev/null)"  >> $NODE_PATH/sys_sriov_totalvfs
         fi
     done
 
-    oc exec -it $pod -n node-gather -- [ -d /host/opt/cni/bin ]
+    oc exec $pod -n node-gather -- [ -d /host/opt/cni/bin ] 2>/dev/null
     if [[ $? -eq 0 ]]; then
-        oc exec -it $pod -n node-gather -- ls -l /host/opt/cni/bin > "${NODE_PATH}/opt-cni-bin"
+        oc exec $pod -n node-gather -- ls -l /host/opt/cni/bin 2>/dev/null > "${NODE_PATH}/opt-cni-bin"
     fi
 
-    oc exec -it $pod -n node-gather -- [ -d /host/var/lib/cni/bin  ]
+    oc exec $pod -n node-gather -- [ -d /host/var/lib/cni/bin  ] 2>/dev/null
     if [[ $? -eq 0 ]]; then
-        oc exec -it $pod -n node-gather -- ls -l /host/var/lib/cni/bin  > "${NODE_PATH}/var-lib-cni-bin"
+        oc exec $pod -n node-gather -- ls -l /host/var/lib/cni/bin 2>/dev/null > "${NODE_PATH}/var-lib-cni-bin"
     fi
 
     config_dirs=(etc/cni/net.d etc/kubernetes/cni/net.d)
     IFS=$' '
     for conf_dir in ${config_dirs[@]}; do
-        oc exec -it $pod -n node-gather -- [ -d /host/$conf_dir ]
+        oc exec $pod -n node-gather -- [ -d /host/$conf_dir ] 2>/dev/null
         if [[ $? -eq 0 ]]; then
             CNI_COFIG_PATH=${NODE_PATH}/$conf_dir
             mkdir -p ${CNI_COFIG_PATH}
@@ -82,12 +82,12 @@ do
     done
     IFS=$'\n'
 
-    oc exec -it $pod -n node-gather -- ls -al /host/dev/vfio/ >> $NODE_PATH/dev_vfio
-    oc exec -it $pod -n node-gather -- dmesg >> $NODE_PATH/dmesg
-    oc exec -it $pod -n node-gather -- cat /host/proc/cmdline >> $NODE_PATH/proc_cmdline
-    oc exec -it $pod -n node-gather -- lspci -vv >> $NODE_PATH/lspci
+    oc exec $pod -n node-gather -- ls -al /host/dev/vfio/ 2>/dev/null >> $NODE_PATH/dev_vfio
+    oc exec $pod -n node-gather -- dmesg 2>/dev/null >> $NODE_PATH/dmesg
+    oc exec $pod -n node-gather -- cat /host/proc/cmdline 2>/dev/null >> $NODE_PATH/proc_cmdline
+    oc exec $pod -n node-gather -- lspci -vv 2>/dev/null >> $NODE_PATH/lspci
 
-    oc exec -it $pod -n node-gather -- [ -f /host/etc/pcidp/config.json ]
+    oc exec $pod -n node-gather -- [ -f /host/etc/pcidp/config.json ] 2>/dev/null
     if [[ $? -eq 0 ]]; then
         oc cp $pod:/host/etc/pcidp/config.json $NODE_PATH/pcidp_config.json -n node-gather
     fi
