@@ -6,45 +6,45 @@ do
   ocproject=$(echo $i | awk -F_ '{print $1}')
   ocvm=$(echo $i | awk -F_ '{print $2}')
   vm_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms
-  
+
   mkdir -p ${vm_collection_path}
-  
+
   # VM : dumpxml
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- virsh dumpxml ${ocproject}_$(echo ${ocvm} | cut -d'-' -f3- | sed "s/-[^-]*$//") > ${vm_collection_path}/${ocvm}.dumpxml.xml
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- virsh dumpxml ${ocproject}_$(echo ${ocvm} 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//") > ${vm_collection_path}/${ocvm}.dumpxml.xml
 
   # VM : QEMU logs
   # libvirt logs are already relayed to virt-launcher, and we capture the virt-launcher pod logs elsewhere. We are want the QEMU log here.
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- cat /var/log/libvirt/qemu/${ocproject}_$(echo ${ocvm} | cut -d'-' -f3- | sed "s/-[^-]*$//").log > ${vm_collection_path}/${ocvm}.qemu.log
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- cat /var/log/libvirt/qemu/${ocproject}_$(echo ${ocvm} 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//").log > ${vm_collection_path}/${ocvm}.qemu.log
 
   # VM : IP
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- ip a > ${vm_collection_path}/${ocvm}.ip.txt
-  
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- ip a 2>/dev/null > ${vm_collection_path}/${ocvm}.ip.txt
+
   # VM : Bridge
   echo "###################################" > ${vm_collection_path}/${ocvm}.bridge.txt
   echo "brctl show:" >> ${vm_collection_path}/${ocvm}.bridge.txt
   echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- brctl show >> ${vm_collection_path}/${ocvm}.bridge.txt
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- brctl show 2>/dev/null >> ${vm_collection_path}/${ocvm}.bridge.txt
 
   echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
   echo "bridge fdb show:" >> ${vm_collection_path}/${ocvm}.bridge.txt
   echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- bridge fdb show >> ${vm_collection_path}/${ocvm}.bridge.txt
-  
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- bridge fdb show 2>/dev/null >> ${vm_collection_path}/${ocvm}.bridge.txt
+
   echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
-  echo "bridge vlan show:" >> ${vm_collection_path}/${ocvm}.bridge.txt  
+  echo "bridge vlan show:" >> ${vm_collection_path}/${ocvm}.bridge.txt
   echo "###################################" >> ${vm_collection_path}/${ocvm}.bridge.txt
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- bridge vlan show >> ${vm_collection_path}/${ocvm}.bridge.txt
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- bridge vlan show 2>/dev/null >> ${vm_collection_path}/${ocvm}.bridge.txt
 
   # VM : iptables
   echo "###################################" > ${vm_collection_path}/${ocvm}.iptables.txt
   echo "Filter table:" >> ${vm_collection_path}/${ocvm}.iptables.txt
   echo "###################################" >> ${vm_collection_path}/${ocvm}.iptables.txt
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- iptables -t filter -L >> ${vm_collection_path}/${ocvm}.iptables.txt
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- iptables -t filter -L 2>/dev/null >> ${vm_collection_path}/${ocvm}.iptables.txt
 
   echo -e "\n\n###################################" >> ${vm_collection_path}/${ocvm}.iptables.txt
   echo "NAT table:" >> ${vm_collection_path}/${ocvm}.iptables.txt
   echo "###################################" >> ${vm_collection_path}/${ocvm}.iptables.txt
-  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- iptables -t nat -L >> ${vm_collection_path}/${ocvm}.iptables.txt  
+  /usr/bin/oc exec ${ocvm} -n ${ocproject} -c compute -- iptables -t nat -L 2>/dev/null >> ${vm_collection_path}/${ocvm}.iptables.txt
 done
 
 exit 0
