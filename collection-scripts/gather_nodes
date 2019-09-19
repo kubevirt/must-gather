@@ -7,9 +7,8 @@ NODES_PATH=${BASE_COLLECTION_PATH}/nodes
 mkdir -p ${NODES_PATH}
 CRD_MANIFEST="/etc/node-gather-crd.yaml"
 DAEMONSET_MANIFEST="/etc/node-gather-ds.yaml"
-
 NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-POD_NAME=$(oc get pod -n $NAMESPACE -o'custom-columns=name:metadata.name' --no-headers)
+POD_NAME=$(oc get pods --field-selector=status.podIP=$(hostname -I) -n $NAMESPACE -o'custom-columns=name:metadata.name' --no-headers)
 MUST_GATHER_IMAGE=$(oc get pod -n $NAMESPACE $POD_NAME -o jsonpath="{.spec.initContainers[0].image}")
 
 sed -i -e "s#MUST_GATHER_IMAGE#$MUST_GATHER_IMAGE#" $DAEMONSET_MANIFEST
