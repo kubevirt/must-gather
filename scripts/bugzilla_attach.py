@@ -39,6 +39,7 @@ import argparse
 import os
 import shutil
 import itertools
+import re
 import subprocess
 import tarfile
 import datetime
@@ -46,9 +47,7 @@ import base64
 from getpass import getpass
 import requests
 
-# 100,000 lines gives a pre-compressed size of ~40MB and a compressed size of ~4MB
-# Without trimming large files, the compressed output can exceed 40MB
-MAX_LOGLINES = 100000
+NUM_SECONDS = 30 * 60 # 30 minutes
 
 BUGZILLA_URL = "https://bugzilla.redhat.com"
 
@@ -62,6 +61,16 @@ ARCHIVE_NAME = "must-gather"
 
 IMAGE = "quay.io/kubevirt/must-gather"
 
+NODELOG_TIMESTAMP_REGEX = re.compile(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d+ \d+:\d+:\d+")
+
+NODELOG_TIMESTAMP_FORMAT = "%b %d %H:%M:%S"
+
+PODLOG_TIMESTAMP_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2}T\d+:\d+:\d+")
+
+PODLOG_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+_current_time = datetime.datetime.utcnow()
+
 def main():
     """Main function"""
 
@@ -73,6 +82,7 @@ def main():
                         help="The image to use for must-gather")
     parser.add_argument("--api-key", metavar="api-key",
                         help="Optional API key instead of username and login (will disable prompts to retry). Can also be set using BUGZILLA_API_KEY environment variable")
+    parser.add_argument("-t", "--time", type=int, help="Number of seconds to use for trimming the log files. Defaults to 30 minutes.")
     parser.add_argument("--log-folder", metavar="log-folder",
                         help="Optional destination for the must-gather output (defaults to creating gather-files/ in the local directory)")
     parser.add_argument("-r", "--reuse-must-gather", action="store_true",
@@ -86,6 +96,11 @@ def main():
     if not check_bug_exists(bug_id):
         print("Bug not found in Bugzilla")
         exit(1)
+
+    if args.time:
+        num_seconds = args.time
+    else:
+        num_seconds = NUM_SECONDS
 
     # If an image is supplied, use that, if not, use the default
     if args.image:
@@ -114,28 +129,31 @@ def main():
             print("No API key supplied and not in interactive mode.")
             exit(1)
 
+
     if not args.reuse_must_gather:
         run_must_gather(image, logfolder)
     else:
         print("Using must-gather results located in %s." % logfolder)
 
-    # Recursively walk the log folder and trim large files
-    find_trim_files(logfolder)
+
+    trim_logs(logfolder, num_seconds)
+    # Trim the node logs and the pod logs
+    #trim_node_logs(logfolder, num_seconds)
+    #trim_pod_logs(logfolder, num_seconds)
 
     # Create a time-stamped archive name
-    archive_name = ARCHIVE_NAME + "-%s.tar.gz" % datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    archive_name = ARCHIVE_NAME + "-%s.tar.gz" % _current_time.strftime("%Y-%m-%d_%H:%M:%SZ")
 
     # Add all the files in the log folder to a new archive file, except for the hidden ones
     with tarfile.open(archive_name, "w:gz") as tar:
         print("Creating archive: " + archive_name)
-        tar.add(logfolder, arcname=os.path.basename(logfolder), filter=filter_hidden)
+        tar.add(logfolder,
+        #arcname=os.path.basename(logfolder),
+        #arcname="",
+        filter=filter_hidden)
 
     # Now that the archive is created, move the files back in place of the trimmed versions
-    for subdir, _, files in os.walk(logfolder):
-        for file in files:
-            # If the file is hidden, it was a trimmed file so restore it
-            if file[0] == ".":
-                shutil.move(subdir + file, subdir + file[1:])
+    restore_hidden_files(logfolder)
 
 
     print("Preparing to send the data to " + BUGZILLA_URL)
@@ -144,7 +162,7 @@ def main():
     with open(archive_name, "rb") as data_file:
         file_data = base64.b64encode(data_file.read()).decode()
 
-    comment = generate_comment(image)
+    comment = generate_comment(image, num_seconds)
 
     # Send the data to the target URL (depending on whether using API key or not)
     if use_api_key:
@@ -159,7 +177,7 @@ def main():
         # Using an api key will disable retries, so just output the error message
         if use_api_key:
             print(resp_json["message"])
-            break
+            exit(1)
         # 300: invalid username or password
         if resp_json["code"] == 300:
             print("Incorrect username or password.")
@@ -212,26 +230,36 @@ def run_must_gather(image, logfolder):
                 "--image=" + image, "--dest-dir=" + logfolder],
                 stdout=out_file, check=True)
         except subprocess.CalledProcessError:
+            print("Error in the execution of must-gather:")
             exit(1)
 
 
-def find_trim_files(logfolder):
-    # Recursively walk the log folder
-    print("Searching for files to trim")
+def trim_logs(logfolder, num_seconds):
     for subdir, _, files in os.walk(logfolder):
         for file in files:
-            file_name = os.path.join(subdir, file)
-            with open(file_name, "r+") as curr_file:
-                # Check the number of lines in each file
-                # Even after compression, files that are too long will cause the attachment to exceed 19.5MB
-                num_lines = get_lines(curr_file)
-                if num_lines > MAX_LOGLINES:
-                    # If the maximum number of lines is too high, trim it
-                    # Copy it so that the original can be replaced
-                    shutil.copyfile(file_name, os.path.join(subdir, "." + file))
-                    print("Trimming %s because it exceeds %d lines"
-                        % (os.path.join(subdir, file), MAX_LOGLINES))
-                    trim_file(curr_file, MAX_LOGLINES)
+            if file == "must-gather.log": #Ignore the log made by capturing the output of must-gather
+                continue
+            if ".log" in file:
+                trim_file_by_time(os.path.join(subdir, file), num_seconds, PODLOG_TIMESTAMP_REGEX, PODLOG_TIMESTAMP_FORMAT)
+            if "kubelet" in file or "NetworkManager" in file:
+                trim_file_by_time(os.path.join(subdir, file), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
+
+def trim_node_logs(logfolder, num_seconds):
+    print("Trimming node logs")
+    for node_name in os.listdir(logfolder + "nodes/"):
+        trim_file_by_time(os.path.join(logfolder, "nodes", node_name, node_name + "_logs_kubelet"), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
+        trim_file_by_time(os.path.join(logfolder, "nodes", node_name, node_name + "_logs_NetworkManager"), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
+
+def trim_pod_logs(logfolder, num_seconds):
+    print("Trimming pod logs")
+    for namespace in os.listdir(logfolder + "namespaces/"):
+        pod_folder = os.path.join(logfolder, "namespaces", namespace, "pods")
+        if not os.path.exists(pod_folder):
+            continue
+        for subdir, _, files in os.walk(pod_folder):
+            for file in files:
+                if ".log" in file:
+                    trim_file_by_time(os.path.join(subdir, file), num_seconds, PODLOG_TIMESTAMP_REGEX, PODLOG_TIMESTAMP_FORMAT)
 
 
 def try_parse_int(value):
@@ -244,6 +272,7 @@ def try_parse_int(value):
 
 
 def send_data(bug_id, file_name, file_data, comment, authentication):
+    """Sends the data to Bugzilla with the relevant information"""
     url = BUGZILLA_URL + '/rest/bug/%s/attachment' % bug_id
     data = {
         **authentication,
@@ -262,30 +291,64 @@ def check_bug_exists(bug_id):
     url = BUGZILLA_URL + '/rest/bug/%s' % bug_id
     return "error" not in requests.get(url).json()
 
-def get_lines(file):
-    """Gets the number of lines in the file handle"""
-    return len(file.readlines())
 
-def trim_file(file, num_lines):
-    """Trims the file handle to the number of lines"""
-    file.seek(0)
-    lines = [line.rstrip('\n') for line in file]
-    lines = lines[-num_lines:]
-    file.seek(0)
-    file.truncate(0)
-    file.write("File trimmed to last %d lines\n" % num_lines)
-    for line in lines:
-        file.write("%s\n" % line)
+def trim_file_by_time(filename, num_seconds, timestamp_regex, timestamp_format):
+    """Uses a binary search to locate where in the file to trim"""
+    with open(filename, "r+") as file:
+        lines = [line.rstrip('\n') for line in file]
+        num_lines = len(lines)
+        # Perform a binary search over the lines to find where in the log file is n seconds ago
+        current_index = round(num_lines / 2) # Start halfway through the file
+        search_size = current_index # Search size is how much to move the index after checking the line
+        while search_size > 1 and current_index > 1 and current_index < num_lines:
+            line = lines[current_index]
+            search_size = round(search_size / 2)
+            # Match according to the designated search regex, then convert to a datetime object
+            timestamp_string = timestamp_regex.match(line)[0]
+            line_timestamp = datetime.datetime.strptime(timestamp_string, timestamp_format)
+            # If the month of the line is greater than the current month, assume it's from last year
+            if line_timestamp.month > _current_time.month:
+                line_timestamp = line_timestamp.replace(year=_current_time.year() - 1)
+            else:
+                line_timestamp = line_timestamp.replace(year=_current_time.year)
+            if (_current_time - line_timestamp).total_seconds() > num_seconds:
+                #If the difference is larger than the max, go later in the file
+                current_index += search_size
+            else:
+                #if not, go earler in the file
+                current_index -= search_size
+        if current_index == 1: # Meaning it reached near the beginning of the file
+            return # Don't remove anything
+        # Since this file will be trimmed, create a hidden copy of it
+        hidden_filename = os.path.join(os.path.dirname(filename), "." + os.path.basename(filename))
+        shutil.copy(filename, hidden_filename)
+        file.seek(0)
+        file.truncate(0)
+        if current_index == num_lines: # Meaning there was nothing in the file that is to be kept
+            pass
+        # Slice from the current index to the end
+        for line in lines[current_index:]:
+            file.write("%s\n" % line)
 
-def generate_comment(image):
+
+
+def generate_comment(image, num_seconds):
     """Creates the comment text for the attachment"""
     comment = ""
     comment += "Result from running oc adm must-gather --image=%s\n" % image
-    comment += "Any file that exceeded %s lines was trimmed in order to reduce the size of the attachment\n" % MAX_LOGLINES
+    comment += "Log files were trimmed to the last %d" % num_seconds
     return comment
 
-def filter_hidden(filename):
+def filter_hidden(file):
     """Filters out hidden files so that the untrimmed ones won't be added to the archive"""
-    return filename if os.path.split(filename.name)[1][0] != "." else None
+    return file if os.path.basename(os.path.normpath(file.name))[0] != "." else None
+
+def restore_hidden_files(logfolder):
+    """Finds any hidden files and renames them to their original name"""
+    for subdir, _, files in os.walk(logfolder):
+        for file in files:
+            # If the file is hidden, it was a trimmed file so restore it
+            if file[0] == ".":
+                shutil.move(os.path.join(subdir, file), os.path.join(subdir, file[1:]))
 
 main()
