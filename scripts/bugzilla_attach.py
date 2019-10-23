@@ -22,9 +22,8 @@ gather-files/ and then executes the following command:
 'oc adm must-gather --image=quay.io/kubevirt/must-gather
 --dest-dir=gather-files/' and pipes the output to
 gather-files/must-gather.log
-In order to meet the maximum attachment file sizes, it searches the
-created directory for any log files that exceed 100,000 lines, and if
-there are any, it trims those files down to 100,000 lines.
+In order to meet the maximum attachment file sizes, logs are trimmed to the
+last n seconds (defaulting to 30 minuts)
 It then creates a time-stamped archive file to compress the attachment
 and prepare it for upload.
 After doing so, the attachment is encoded as a base64 string.
