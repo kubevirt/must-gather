@@ -1,5 +1,20 @@
 #!/bin/bash
 
+check_node_gather_pods_ready() {
+    line=$(oc get ds node-gather-daemonset -o=custom-columns=DESIRED:.status.desiredNumberScheduled,READY:.status.numberReady --no-headers -n node-gather)
+
+    IFS=$' '
+    read desired ready <<< $line
+    IFS=$'\n'
+
+    if [[ $ready -eq $desired ]]
+    then
+       return 0
+    else
+       return 1
+    fi
+}
+
 IFS=$'\n'
 
 BASE_COLLECTION_PATH="/must-gather"
@@ -17,20 +32,18 @@ oc create -f $CRD_MANIFEST
 oc adm policy add-scc-to-user privileged -n node-gather -z node-gather
 oc create -f $DAEMONSET_MANIFEST
 
-while true
-do
-    line=$(oc get ds node-gather-daemonset -o=custom-columns=DESIRED:.status.desiredNumberScheduled,READY:.status.numberReady --no-headers -n node-gather)
-
-    DESIRED=$(echo $line | awk -F ' ' '{print $1}')
-    READY=$(echo $line | awk -F ' ' '{print $2}')
-    if [[ $READY -eq $DESIRED ]]
-    then
-       break
-    fi
-    sleep 1
+COUNTER=0
+until check_node_gather_pods_ready || [ $COUNTER -eq 300 ]; do
+   (( COUNTER++ ))
+   sleep 1
 done
 
-for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers -n node-gather)
+for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName --no-headers --field-selector=status.phase!=Running -n node-gather)
+do
+    echo "Failed to collect node-gather data from node ${line} due to pod scheduling failure." >> ${NODES_PATH}/skipped_nodes.txt
+done
+
+for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather)
 do
     node=$(echo $line | awk -F ' ' '{print $1}')
     pod=$(echo $line | awk -F ' ' '{print $2}')
