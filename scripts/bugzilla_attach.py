@@ -23,7 +23,7 @@ gather-files/ and then executes the following command:
 --dest-dir=gather-files/' and pipes the output to
 gather-files/must-gather.log
 In order to meet the maximum attachment file sizes, logs are trimmed to the
-last n seconds (defaulting to 30 minuts)
+last n seconds (defaulting to 30 minutes)
 It then creates a time-stamped archive file to compress the attachment
 and prepare it for upload.
 After doing so, the attachment is encoded as a base64 string.
@@ -80,14 +80,14 @@ def main():
     parser.add_argument("--image", metavar="image",
                         help="The image to use for must-gather")
     parser.add_argument("--api-key", metavar="api-key",
-                        help="Optional API key instead of username and login (will disable prompts to retry). Can also be set using BUGZILLA_API_KEY environment variable")
-    parser.add_argument("-t", "--time", type=int, help="Number of minutes to use for trimming the log files. Defaults to 30.")
+                        help="Bugzilla API key. Can also be set using BUGZILLA_API_KEY environment variable")
+    parser.add_argument("-t", "--time", type=int, help="Number of minutes to use for trimming the log files. Defaults to 30")
     parser.add_argument("--log-folder", metavar="log-folder",
                         help="Optional destination for the must-gather output (defaults to creating gather-files/ in the local directory)")
     parser.add_argument("-r", "--reuse-must-gather", action="store_true",
                         help="Use this to skip rerunning must-gather and just attach what is already gathered")
     parser.add_argument("-i", "--interactive", action="store_true",
-                        help="Use this flag to prompt for a username and password")
+                        help="Use this flag to prompt for a username and password. Using this will prompt for retries if the login is unsuccessful")
     args = parser.parse_args()
 
     bug_id = args.ID
@@ -230,14 +230,19 @@ def run_must_gather(image, logfolder):
 
 
 def trim_logs(logfolder, num_seconds):
+    global _deadline
+    _deadline = _current_time - datetime.timedelta(seconds = num_seconds)
     for subdir, _, files in os.walk(logfolder):
         for file in files:
             if file == "must-gather.log": #Ignore the log made by capturing the output of must-gather
                 continue
+            full_path = os.path.join(subdir, file)
             if ".log" in file:
-                trim_file_by_time(os.path.join(subdir, file), num_seconds, PODLOG_TIMESTAMP_REGEX, PODLOG_TIMESTAMP_FORMAT)
+                trim_from_back(full_path, pod_condition(full_path))
+                #trim_file_by_time(os.path.join(subdir, file), num_seconds, PODLOG_TIMESTAMP_REGEX, PODLOG_TIMESTAMP_FORMAT)
             if "kubelet" in file or "NetworkManager" in file:
-                trim_file_by_time(os.path.join(subdir, file), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
+                trim_from_back(full_path, node_condition(full_path))
+                #trim_file_by_time(os.path.join(subdir, file), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
 
 def try_parse_int(value):
     """Tries to parse the value as an int"""
@@ -262,51 +267,111 @@ def send_data(bug_id, file_name, file_data, comment, authentication):
     }
     return requests.post(url, json=data, headers=HEADERS)
 
+"""Enum for the possible outputs of the line condition functions"""
+LINE_LATER = 1
+LINE_EARLIER = 0
+LINE_NO_TIMESTAMP = -1
+
+
+"""Regex and format for reading the header of a node log"""
+HEADER_REGEX = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \w{3}")
+HEADER_FORMAT = "%Y-%m-%d %H:%M:%S %Z"
+
+def node_condition(filename):
+    """Returns a line condition function based on the timestamp in the header"""
+    with open(filename, "r") as file:
+        header_timestamps = HEADER_REGEX.findall(file.readline())
+        log_end = datetime.datetime.strptime(header_timestamps[1], HEADER_FORMAT)
+    def check_line(line):
+        #Empty string means end of file, otherwise it would be '\n'
+        if line == '':
+            return LINE_LATER
+        regex_result = NODELOG_TIMESTAMP_REGEX.search(line)
+        if regex_result:
+            timestamp = datetime.datetime.strptime(regex_result.group(0), NODELOG_TIMESTAMP_FORMAT)
+
+            #Since there's no year provided, default it to the log end's year
+            timestamp = timestamp.replace(year=log_end.year)
+
+            #If that made the timestamp greater than the log end, it means it was from a previous year, so set it to be the year before the log end
+            if timestamp > log_end:
+                timestamp = timestamp.replace(year=log_end.year - 1)
+
+            # Check whether the line is earlier or later than the deadline
+            if timestamp < _deadline:
+                return LINE_EARLIER
+            else:
+                return LINE_LATER
+        else:
+            return LINE_NO_TIMESTAMP
+    return check_line
+
+def pod_condition(filename):
+    """Returns a condition function for checking the lines of a pod log"""
+    def check_line(line):
+        #Empty string means end of file, otherwise it would be '\n'
+        if line == '':
+            return LINE_LATER
+        regex_result = PODLOG_TIMESTAMP_REGEX.search(line)
+        if regex_result:
+            timestamp = datetime.datetime.strptime(regex_result.group(0), PODLOG_TIMESTAMP_FORMAT)
+            if timestamp < _deadline:
+                return LINE_EARLIER
+            else:
+                return LINE_LATER
+        else:
+            return LINE_NO_TIMESTAMP
+    return check_line
+
+"""Size of chunk to use for reading from the back of a log file."""
+CHUNK_SIZE = 65536
+
+def trim_from_back(filename, condition):
+    """Scans chunks of data from the back of the file until it's reached a point that's earlier than the deadline.
+    It then reads forward line by line until it reaches the correct point to trim."""
+    print("Trimming %s" % filename)
+    with open(filename, "r+") as file:
+        file.seek(0, 2)
+        curr_chunk_start = file.tell() - CHUNK_SIZE
+        condition_result = LINE_LATER
+        while curr_chunk_start > 0:
+            file.seek(curr_chunk_start)
+            file.readline() #Discard this since it's most likely a partial line
+            condition_result = condition(file.readline()) #This is the first full line in the chunk
+            while condition_result == LINE_NO_TIMESTAMP:
+                condition_result = condition(file.readline()) # Read until there's a line that has a timestamp
+            if condition_result == LINE_EARLIER:
+                break
+            curr_chunk_start -= CHUNK_SIZE
+        #At this point the curr_chunk_start is either less than zero, or the chunk contains the first line later than the deadline
+        if curr_chunk_start < 0:
+            curr_chunk_start = 0
+        file.seek(curr_chunk_start)
+        trim_start = curr_chunk_start
+        while condition_result != LINE_LATER:
+            line = file.readline()
+            trim_start += len(line)
+            condition_result = condition(line)
+        # trim_start is now right before the last line that was later than the deadline
+        if trim_start == 0:
+            return
+        # Since this file will be trimmed, create a hidden copy of it
+        hidden_filename = os.path.join(os.path.dirname(filename), "." + os.path.basename(filename))
+        shutil.copy(filename, hidden_filename)
+        file.seek(trim_start)
+        # Read the data we want to keep
+        content_to_keep = file.read()
+        file.seek(0)
+        file.truncate(0)
+        file.write("This file was trimmed to only contain lines since %s\n" % _deadline.strftime("%Y-%m-%d %H:%M:%SZ"))
+        file.write(content_to_keep)
+
+
 
 def check_bug_exists(bug_id):
     """Checks whether the bug exists in Bugzilla"""
     url = BUGZILLA_URL + '/rest/bug/%s' % bug_id
     return "error" not in requests.get(url).json()
-
-def trim_file_by_time(filename, num_seconds, timestamp_regex, timestamp_format):
-    """Uses a binary search to locate where in the file to trim"""
-    print("Trimming %s" % filename)
-    with open(filename, "r+") as file:
-        lines = [line.rstrip('\n') for line in file]
-        num_lines = len(lines)
-        # Perform a binary search over the lines to find where in the log file is n seconds ago
-        current_index = round(num_lines / 2) # Start halfway through the file
-        search_size = current_index # Search size is how much to move the index after checking the line
-        while search_size > 1 and current_index > 1 and current_index < num_lines:
-            line = lines[current_index]
-            search_size = round(search_size / 2)
-            # Match according to the designated search regex, then convert to a datetime object
-            timestamp_string = timestamp_regex.match(line)[0]
-            line_timestamp = datetime.datetime.strptime(timestamp_string, timestamp_format)
-            # If the month of the line is greater than the current month, assume it's from last year
-            if line_timestamp.month > _current_time.month:
-                line_timestamp = line_timestamp.replace(year=_current_time.year() - 1)
-            else:
-                line_timestamp = line_timestamp.replace(year=_current_time.year)
-            if (_current_time - line_timestamp).total_seconds() > num_seconds:
-                #If the difference is larger than the max, go later in the file
-                current_index += search_size
-            else:
-                #if not, go earler in the file
-                current_index -= search_size
-        if current_index == 1: # Meaning it reached near the beginning of the file
-            return # Don't remove anything
-        # Since this file will be trimmed, create a hidden copy of it
-        hidden_filename = os.path.join(os.path.dirname(filename), "." + os.path.basename(filename))
-        shutil.copy(filename, hidden_filename)
-        file.seek(0)
-        file.truncate(0)
-        if current_index == num_lines: # Meaning there was nothing in the file that is to be kept
-            pass
-        # Slice from the current index to the end
-        for line in lines[current_index:]:
-            file.write("%s\n" % line)
-
 
 
 def generate_comment(image, num_seconds):
