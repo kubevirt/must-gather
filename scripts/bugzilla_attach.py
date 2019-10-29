@@ -81,7 +81,7 @@ def main():
                         help="The image to use for must-gather")
     parser.add_argument("--api-key", metavar="api-key",
                         help="Optional API key instead of username and login (will disable prompts to retry). Can also be set using BUGZILLA_API_KEY environment variable")
-    parser.add_argument("-t", "--time", type=int, help="Number of seconds to use for trimming the log files. Defaults to 30 minutes.")
+    parser.add_argument("-t", "--time", type=int, help="Number of minutes to use for trimming the log files. Defaults to 30.")
     parser.add_argument("--log-folder", metavar="log-folder",
                         help="Optional destination for the must-gather output (defaults to creating gather-files/ in the local directory)")
     parser.add_argument("-r", "--reuse-must-gather", action="store_true",
@@ -97,7 +97,7 @@ def main():
         exit(1)
 
     if args.time:
-        num_seconds = args.time
+        num_seconds = args.time * 60
     else:
         num_seconds = NUM_SECONDS
 
@@ -135,10 +135,8 @@ def main():
         print("Using must-gather results located in %s." % logfolder)
 
 
+    #Trim the log folders to the number of seconds
     trim_logs(logfolder, num_seconds)
-    # Trim the node logs and the pod logs
-    #trim_node_logs(logfolder, num_seconds)
-    #trim_pod_logs(logfolder, num_seconds)
 
     # Create a time-stamped archive name
     archive_name = ARCHIVE_NAME + "-%s.tar.gz" % _current_time.strftime("%Y-%m-%d_%H:%M:%SZ")
@@ -146,9 +144,7 @@ def main():
     # Add all the files in the log folder to a new archive file, except for the hidden ones
     with tarfile.open(archive_name, "w:gz") as tar:
         print("Creating archive: " + archive_name)
-        tar.add(logfolder,
-        #arcname=os.path.basename(logfolder),
-        #arcname="",
+        tar.add(logfolder,  
         filter=filter_hidden)
 
     # Now that the archive is created, move the files back in place of the trimmed versions
@@ -227,9 +223,9 @@ def run_must_gather(image, logfolder):
             subprocess.run(
                 ["oc", "adm", "must-gather",
                 "--image=" + image, "--dest-dir=" + logfolder],
-                stdout=out_file, check=True)
-        except subprocess.CalledProcessError:
-            print("Error in the execution of must-gather:")
+                stdout=out_file, stderr=subprocess.PIPE, check=True)
+        except subprocess.CalledProcessError as e:
+            print("Error in the execution of must-gather: " + e.stderr)
             exit(1)
 
 
@@ -242,24 +238,6 @@ def trim_logs(logfolder, num_seconds):
                 trim_file_by_time(os.path.join(subdir, file), num_seconds, PODLOG_TIMESTAMP_REGEX, PODLOG_TIMESTAMP_FORMAT)
             if "kubelet" in file or "NetworkManager" in file:
                 trim_file_by_time(os.path.join(subdir, file), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
-
-def trim_node_logs(logfolder, num_seconds):
-    print("Trimming node logs")
-    for node_name in os.listdir(logfolder + "nodes/"):
-        trim_file_by_time(os.path.join(logfolder, "nodes", node_name, node_name + "_logs_kubelet"), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
-        trim_file_by_time(os.path.join(logfolder, "nodes", node_name, node_name + "_logs_NetworkManager"), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
-
-def trim_pod_logs(logfolder, num_seconds):
-    print("Trimming pod logs")
-    for namespace in os.listdir(logfolder + "namespaces/"):
-        pod_folder = os.path.join(logfolder, "namespaces", namespace, "pods")
-        if not os.path.exists(pod_folder):
-            continue
-        for subdir, _, files in os.walk(pod_folder):
-            for file in files:
-                if ".log" in file:
-                    trim_file_by_time(os.path.join(subdir, file), num_seconds, PODLOG_TIMESTAMP_REGEX, PODLOG_TIMESTAMP_FORMAT)
-
 
 def try_parse_int(value):
     """Tries to parse the value as an int"""
@@ -290,9 +268,9 @@ def check_bug_exists(bug_id):
     url = BUGZILLA_URL + '/rest/bug/%s' % bug_id
     return "error" not in requests.get(url).json()
 
-
 def trim_file_by_time(filename, num_seconds, timestamp_regex, timestamp_format):
     """Uses a binary search to locate where in the file to trim"""
+    print("Trimming %s" % filename)
     with open(filename, "r+") as file:
         lines = [line.rstrip('\n') for line in file]
         num_lines = len(lines)
