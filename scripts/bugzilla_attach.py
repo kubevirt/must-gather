@@ -79,8 +79,10 @@ def main():
     parser = argparse.ArgumentParser(description="Sends the result of must-gather to Bugzilla.")
     parser.add_argument("ID", metavar="id", type=int,
                         help="The ID of the bug in Bugzilla")
-    parser.add_argument("--image", metavar="image",
-                        help="The image to use for must-gather")
+    parser.add_argument("--image", metavar="image", action="append",
+                        help="The image to use for must-gather. If none supplied, defaults to quay.io/kubevirt/must-gather")
+    parser.add_argument("--image-stream", metavar="image-stream", action="append",
+                        help="Specify an image stream to pass to must-gather")
     parser.add_argument("--api-key", metavar="api-key",
                         help="Bugzilla API key. Can also be set using BUGZILLA_API_KEY environment variable")
     parser.add_argument("-t", "--time", type=int, help="Number of minutes to use for trimming the log files. Defaults to 30")
@@ -103,11 +105,14 @@ def main():
     else:
         num_seconds = NUM_SECONDS
 
-    # If an image is supplied, use that, if not, use the default
+    # If an image or an image stream is supplied, use that, if not, use the default
     if args.image:
-        image = args.image
+        images = args.image
     else:
-        image = IMAGE
+        if args.image_stream == None:
+            images = [IMAGE]
+        else:
+            images = []
 
     # If a folder is supplied, use that, otherwise use the default in the local folder
     if args.log_folder:
@@ -132,7 +137,7 @@ def main():
 
 
     if not args.reuse_must_gather:
-        run_must_gather(image, logfolder)
+        run_must_gather(images, logfolder, args.image_stream)
     else:
         print("Using must-gather results located in %s." % logfolder)
 
@@ -212,13 +217,21 @@ def main():
             exit(1)
     print("File successfully uploaded to Bugzilla")
 
-def run_must_gather(image, logfolder):
+def run_must_gather(images, logfolder, image_streams):
     # If the log folder already exists, delete it
     if os.path.isdir(logfolder):
         shutil.rmtree(logfolder)
 
     # Make a new log folder
     os.mkdir(logfolder)
+
+    image_args = []
+    if images is not None:
+        for image in images:
+            image_args.append("--image=" + image)
+    if image_streams is not None:
+        for image_stream in image_streams:
+            image_args.append("--image-stream=" + image_stream)
 
     # Open the output file
     with open(logfolder + OUTPUT_FILE, "w+") as out_file:
@@ -227,7 +240,7 @@ def run_must_gather(image, logfolder):
         try:
             subprocess.run(
                 ["oc", "adm", "must-gather",
-                "--image=" + image, "--dest-dir=" + logfolder],
+                "--dest-dir=" + logfolder] + image_args,
                 stdout=out_file, stderr=subprocess.PIPE, check=True)
         except subprocess.CalledProcessError as e:
             print("Error in the execution of must-gather: ")
