@@ -153,7 +153,7 @@ def main():
     restore_hidden_files(logfolder)
 
     if os.path.getsize(archive_name) > MAX_ARCHIVE_SIZE:
-        print("Archive %s is too large to upload (exceeds %d bytes)." % (archive_name, MAX_ARCHIVE_SIZE))
+        print("Archive %s is too large to upload (exceeds %d MB)." % (archive_name, MAX_ARCHIVE_SIZE / (1024*1024)))
         exit()
 
     print("Preparing to send the data to " + BUGZILLA_URL)
@@ -230,7 +230,8 @@ def run_must_gather(image, logfolder):
                 "--image=" + image, "--dest-dir=" + logfolder],
                 stdout=out_file, stderr=subprocess.PIPE, check=True)
         except subprocess.CalledProcessError as e:
-            print("Error in the execution of must-gather: " + e.stderr)
+            print("Error in the execution of must-gather: ")
+            print(e.stderr.decode("utf-8"))
             exit(1)
 
 
