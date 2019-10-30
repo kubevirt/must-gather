@@ -58,6 +58,8 @@ OUTPUT_FILE = "must-gather.log"
 
 ARCHIVE_NAME = "must-gather"
 
+MAX_ARCHIVE_SIZE = 19.5 * 1024 * 1024 #19.5 MB as bytes
+
 IMAGE = "quay.io/kubevirt/must-gather"
 
 NODELOG_TIMESTAMP_REGEX = re.compile(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d+ \d+:\d+:\d+")
@@ -150,6 +152,9 @@ def main():
     # Now that the archive is created, move the files back in place of the trimmed versions
     restore_hidden_files(logfolder)
 
+    if os.path.getsize(archive_name) > MAX_ARCHIVE_SIZE:
+        print("Archive %s is too large to upload (exceeds %d bytes)." % (archive_name, MAX_ARCHIVE_SIZE))
+        exit()
 
     print("Preparing to send the data to " + BUGZILLA_URL)
 
@@ -240,7 +245,7 @@ def trim_logs(logfolder, num_seconds):
             if ".log" in file:
                 trim_from_back(full_path, pod_condition(full_path))
                 #trim_file_by_time(os.path.join(subdir, file), num_seconds, PODLOG_TIMESTAMP_REGEX, PODLOG_TIMESTAMP_FORMAT)
-            if "kubelet" in file or "NetworkManager" in file:
+            elif "kubelet" in file or "NetworkManager" in file:
                 trim_from_back(full_path, node_condition(full_path))
                 #trim_file_by_time(os.path.join(subdir, file), num_seconds, NODELOG_TIMESTAMP_REGEX, NODELOG_TIMESTAMP_FORMAT)
 
@@ -331,7 +336,7 @@ def trim_from_back(filename, condition):
     It then reads forward line by line until it reaches the correct point to trim."""
     print("Trimming %s" % filename)
     with open(filename, "r+") as file:
-        file.seek(0, 2)
+        file.seek(0, os.SEEK_END)
         curr_chunk_start = file.tell() - CHUNK_SIZE
         condition_result = LINE_LATER
         while curr_chunk_start > 0:
