@@ -162,7 +162,7 @@ def main():
     with open(archive_name, "rb") as data_file:
         file_data = base64.b64encode(data_file.read()).decode()
 
-    comment = generate_comment(image, num_seconds)
+    comment = generate_comment(num_seconds)
 
     # Send the data to the target URL (depending on whether using API key or not)
     if use_api_key:
@@ -380,10 +380,10 @@ def check_bug_exists(bug_id):
     return "error" not in requests.get(url).json()
 
 
-def generate_comment(image, num_seconds):
+def generate_comment(num_seconds):
     """Creates the comment text for the attachment"""
     comment = ""
-    comment += "Result from running oc adm must-gather --image=%s\n" % image
+    comment += "Result from running must-gather"
     comment += "Log files were trimmed to the last %d" % num_seconds
     return comment
 
