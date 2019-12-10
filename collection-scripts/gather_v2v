@@ -17,7 +17,7 @@ do
         pod_collection_path=$ns_collection_path/$pod
         mkdir -p $pod_collection_path
 
-        /usr/bin/openshift-must-gather inspect -n $ns pod/$pod
+        /usr/bin/oc adm inspect --dest-dir must-gather -n $ns pod/$pod
         oc logs $pod -n $ns > $ns_collection_path/$pod.log
     done
 done
