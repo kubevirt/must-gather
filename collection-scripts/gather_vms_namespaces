@@ -10,7 +10,7 @@ done
 
 # Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
-  /usr/bin/openshift-must-gather inspect ${resource}
+  /usr/bin/oc adm inspect --dest-dir must-gather ${resource}
 done
 
 exit 0

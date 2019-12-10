@@ -13,7 +13,7 @@ do
         pod_collection_path=$ns_collection_path/$pod
         mkdir -p $pod_collection_path
 
-        /usr/bin/openshift-must-gather inspect -n $ns pod/$pod
+        /usr/bin/oc adm inspect --dest-dir must-gather -n $ns pod/$pod
         oc logs $pod -n $ns > $pod_collection_path/$pod.log
     done
 
@@ -23,7 +23,7 @@ do
         pvc_collection_path=$ns_collection_path/core/persistentvolumeclaims
         mkdir -p $pvc_collection_path
 
-        /usr/bin/openshift-must-gather inspect -n $ns pvc/$pvc
+        /usr/bin/oc adm inspect --dest-dir must-gather -n $ns pvc/$pvc
         oc describe pvc $pvc -n $ns > $pvc_collection_path/${pvc}_describe.txt
     done
 
