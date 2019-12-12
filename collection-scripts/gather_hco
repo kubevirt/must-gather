@@ -9,11 +9,7 @@ NS=openshift-cnv
 
 mkdir -p ${NAMESPACE_PATH}/${NS}
 
-for name in $(oc get packagemanifest -n $NS -o=custom-columns=NAME:.metadata.name --no-headers)
-do
-    oc get packagemanifest $name -n $NS -o yaml >> ${NAMESPACE_PATH}/${NS}/packagemanifests
-    echo '---------------' >> ${NAMESPACE_PATH}/${NS}/packagemanifests
-done
+oc get packagemanifest -n $NS -o yaml >>${NAMESPACE_PATH}/${NS}/packagemanifests
 
 for name in $(oc get subscriptions -n $NS -o=custom-columns=NAME:.metadata.name --no-headers)
 do
