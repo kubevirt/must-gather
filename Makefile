@@ -1,6 +1,10 @@
 IMAGE_REGISTRY ?= quay.io
-MUST_GATHER_IMAGE ?= kubevirt/must-gather
 IMAGE_TAG ?= latest
+
+# MUST_GATHER_IMAGE needs to be passed explicitly to avoid accidentally pushing to kubevirt/must-gather
+ifndef MUST_GATHER_IMAGE
+$(error MUST_GATHER_IMAGE is not set.)
+endif
 
 build: docker-build docker-push
 
