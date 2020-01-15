@@ -1,12 +1,16 @@
 language: generic
-
 services:
 - docker
-
 jobs:
   include:
   - stage: Build
     name: Build
-    if: tag IS present
-    before_script: skip
-    script: make build "IMAGE_TAG=$TRAVIS_TAG"
+    script:
+    - echo $QUAY_PASSWORD | docker login -u $QUAY_USERNAME --password-stdin quay.io
+    - make build MUST_GATHER_IMAGE=kubevirt/must-gather
+env:
+  global:
+  # QUAY_USERNAME
+  - secure: H/ye2fUBbR7Af0Kqroa1aooSx3I9RB+MXDv3f5hWhhOSRR7muFRcfjauZ15fRHBEtOx8KaNtilSMzCYrW1/YRMAfQ82KR4VJZ7cQl5ReSu9RZ6jliZmKwr0NsK9eZZ61YW++s6MRHd1cLh/Q4hp1dz7yFhPWh8lJyUIUeHAEDuWjA5uu/3tlsEcMCw5h45aTUQTyyU7XquNAyfGzA+Qc/TJok81jN+SRdWTlzj5JA/8nzl9kJ3B/zJUh1LBsYS96Wk3YxsxzbCy1nF9UwVq8thc+TWDfl0/q4g7nsMdPh+YDx7OG154wEt/hyXDf9dXgxcIHLIfC7twttw8K06PVuQTv8K4Jo1IhSx2TL+A5/IwHrj9Q1jrWB1nmYHcpSyVRYQ6is16mwK8d4HEF1L70WjNviaqjLNoZya8xkwGj81gQSaUpzoOMQsBp0ylJv4R0ixCDzJShN53jlBeO4LQdNaUvCRi86Bxu5l1lEMavfXGNg+SEYBULLkjmnzfU+57KQQrgXxeVRzVWgEj7VnxsXGdnBTTvg0A3OY1MVF6PjXgcQlOpQoMDkaKXGdg2At/p21jcDPs72lSPTj97uAa3SFNYlNiSqZYKA9Vo4kreOgAxJEXLyUnPJSNqvFwdKjpgw2n3MzQ5K8b1NqXVZHXlgg2IbMjlbNyN0BNM8W7fvuA=
+  # QUAY_PASSWORD
+  - secure: XnHglwzozVsO8cBNt6Dwg20zIOvEcVS4RAiHKNc7Iw872iruczjTdvXZ2kPKt+gYaHpg0EGqYSdizYVLcQj+c4H2l/Aw4isAeRlQRG0BChFekKjFgUvpNS8Sti3bUIYV75pWzJReGbgEFtcout1ANWcN3xnfzZOOxd+kQAqKADmqBCt3qhpI58n2vM0RENX8KNKc01GSYbHKRo/ALASBqRXKT0qXceir+fa3u3ArG4jbhFpHURlMMzjhck6oFBiqhC3QBFfhZg/cy1eultiNhJHBOXBcZhWL0puqso3084jq9sKIaes/h5eLfIhINps6AEffMnzyucOOHf85Ydy3GH62ljAl4ExSvoCfBdzsumMpYrI58rP/L2DjLm5K3A10kAgmjlMGEZD8IWfkXkEghp9WsUIfgGxjH5j+9VbFWuJxyJMWMbrfd3mu0mI21ZU1zPGGUQ+20itTDXAf/+pvhzRwoc2ZkmfkpQCbw32dvTVBiDPZCgvDqTRo4yP5wOQ7cC4dFsSNRdFdjJHLSwk8jp5KHaY6m6F0NAiNBMX0pZLDISw4pGRxr44hRXygw3B3j9eWW+6vscWIU8Hq+blJya9sNZ24+h/4JJkV8WGnuD+91WHw5KCU4DdXqUYe557gB01Rs8Oq1+q8XgPbDlAD4HRbczoo79Yi/6C4N29mn1E=
