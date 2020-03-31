@@ -7,6 +7,7 @@ BASE_COLLECTION_PATH="/must-gather"
 IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources/images
 NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
 
+mkdir ${BASE_COLLECTION_PATH}/cluster-scoped-resources
 for name in $(oc get image -o=custom-columns=NAME:.metadata.name --no-headers)
 do
     oc get image $name -o yaml >> ${IMAGES_PATH}
