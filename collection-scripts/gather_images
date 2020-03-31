@@ -4,14 +4,14 @@ IFS=$'\n'
 
 BASE_COLLECTION_PATH="/must-gather"
 
-IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources/images
+IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources
 NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
 
-mkdir ${BASE_COLLECTION_PATH}/cluster-scoped-resources
+mkdir -p ${IMAGES_PATH}
 for name in $(oc get image -o=custom-columns=NAME:.metadata.name --no-headers)
 do
-    oc get image $name -o yaml >> ${IMAGES_PATH}
-    echo '---------------' >> ${IMAGES_PATH}
+    oc get image $name -o yaml >> ${IMAGES_PATH}/images
+    echo '---------------' >> ${IMAGES_PATH}/images
 done
 
 for line in $(oc get imagestreams -o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers --all-namespaces)
