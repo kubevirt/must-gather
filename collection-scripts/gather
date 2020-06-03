@@ -22,7 +22,7 @@ resources+=(virtualmachines)
 resources+=(virtualmachineinstances virtualmachineinstancereplicasets virtualmachineinstancepresets virtualmachineinstancemigrations)
 
 # v2v
-resources+=(v2vvmwares)
+resources+=(v2vvmwares virtualmachineimports)
 
 resources+=(Network-attachment-definitions)
 

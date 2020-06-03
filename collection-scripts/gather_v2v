@@ -9,7 +9,7 @@ do
 
     for pod in $(oc get pods -n $ns --no-headers -o=custom-columns=NAME:.metadata.name 2>/dev/null)
     do
-        if ! expr $pod : 'kubevirt-v2v-conversion-*' >/dev/null
+        if ! expr $pod : 'kubevirt-v2v-conversion-*' && ! expr $pod : 'vm-import-*' >/dev/null
         then
             continue
         fi
