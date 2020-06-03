@@ -5,6 +5,12 @@ jobs:
   include:
   - stage: Build
     name: Build
+    if: type = pull_request
+    script:
+    - make docker-build MUST_GATHER_IMAGE=kubevirt/must-gather
+  - stage: Push
+    name: Push
+    if: type = push
     script:
     - echo $QUAY_PASSWORD | docker login -u $QUAY_USERNAME --password-stdin quay.io
     - make build MUST_GATHER_IMAGE=kubevirt/must-gather
