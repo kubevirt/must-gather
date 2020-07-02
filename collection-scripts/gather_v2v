@@ -9,15 +9,11 @@ do
 
     for pod in $(oc get pods -n $ns --no-headers -o=custom-columns=NAME:.metadata.name 2>/dev/null)
     do
-        if ! expr $pod : 'kubevirt-v2v-conversion-*' && ! expr $pod : 'vm-import-*' >/dev/null
-        then
-            continue
+        if [[ $pod == kubevirt-v2v-conversion-* || $pod == vm-import-* ]]; then
+            pod_collection_path=$ns_collection_path/$pod
+            mkdir -p $pod_collection_path
+            /usr/bin/oc adm inspect --dest-dir must-gather -n $ns pod/$pod
+            oc logs $pod -n $ns > $ns_collection_path/$pod.log
         fi
-
-        pod_collection_path=$ns_collection_path/$pod
-        mkdir -p $pod_collection_path
-
-        /usr/bin/oc adm inspect --dest-dir must-gather -n $ns pod/$pod
-        oc logs $pod -n $ns > $ns_collection_path/$pod.log
     done
 done

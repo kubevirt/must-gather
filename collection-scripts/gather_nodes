@@ -43,12 +43,16 @@ do
     echo "Failed to collect node-gather data from node ${line} due to pod scheduling failure." >> ${NODES_PATH}/skipped_nodes.txt
 done
 
-for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather)
-do
+gather_single_pod() {
+    line="$1"
+
     node=$(echo $line | awk -F ' ' '{print $1}')
     pod=$(echo $line | awk -F ' ' '{print $2}')
     NODE_PATH=${NODES_PATH}/$node
     mkdir -p ${NODE_PATH}
+
+    echo "$pod - Gathering node data"
+
     oc exec $pod -n node-gather -- ip a 2>/dev/null >> $NODE_PATH/ip.txt
     oc exec $pod -n node-gather -- ip -o link show type bridge 2>/dev/null >> $NODE_PATH/bridge
     oc exec $pod -n node-gather -- bridge -j vlan show 2>/dev/null >> $NODE_PATH/vlan
@@ -60,17 +64,8 @@ do
         oc exec $pod -n node-gather -- nft list table $family $table 2>/dev/null > "$NODE_PATH/nft-${family}-${table}"
     done
 
-    for i in $(oc exec $pod -n node-gather -- ls /host/sys/bus/pci/devices/ 2>/dev/null);
-    do
-        if [ $(oc exec $pod -n node-gather -- test -e /host/sys/bus/pci/devices/$i/sriov_numvfs 2>/dev/null && echo 1 || echo 0) -eq 1 ];
-        then
-            echo "sriov_numvfs on dev $i: $(oc exec $pod -n node-gather -- cat /host/sys/bus/pci/devices/$i/sriov_numvfs 2>/dev/null)"  >> $NODE_PATH/sys_sriov_numvfs
-        fi
-        if [ $(oc exec $pod -n node-gather -- test -e /host/sys/bus/pci/devices/$i/sriov_totalvfs 2>/dev/null && echo 1 || echo 0) -eq 1 ];
-        then
-            echo "sriov_numvfs on dev $i: $(oc exec $pod -n node-gather -- cat /host/sys/bus/pci/devices/$i/sriov_totalvfs 2>/dev/null)"  >> $NODE_PATH/sys_sriov_totalvfs
-        fi
-    done
+    oc exec $pod -n node-gather -- /bin/bash -c 'for dev in /host/sys/bus/pci/devices/*; do if [[ -e $dev/sriov_numvfs ]]; then echo "sriov_numvfs on dev ${dev##*/}: $(cat $dev/sriov_numvfs)"; fi; done' >> $NODE_PATH/sys_sriov_numvfs
+    oc exec $pod -n node-gather -- /bin/bash -c 'for dev in /host/sys/bus/pci/devices/*; do if [[ -e $dev/sriov_totalvfs ]]; then echo "sriov_totalvfs on dev ${dev##*/}: $(cat $dev/sriov_totalvfs)"; fi; done' >> $NODE_PATH/sys_sriov_totalvfs
 
     oc exec $pod -n node-gather -- [ -d /host/opt/cni/bin ] 2>/dev/null
     if [[ $? -eq 0 ]]; then
@@ -104,7 +99,14 @@ do
         oc cp $pod:/host/etc/pcidp/config.json $NODE_PATH/pcidp_config.json -n node-gather 2>/dev/null
     fi
 
+}
+
+for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather)
+do
+    gather_single_pod "$line" &
 done
+
+wait
 
 # Collect journal logs for specified units for all nodes
 NODE_UNITS=(NetworkManager kubelet)
