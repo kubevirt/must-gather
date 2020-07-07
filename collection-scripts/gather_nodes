@@ -7,7 +7,7 @@ check_node_gather_pods_ready() {
     read desired ready <<< $line
     IFS=$'\n'
 
-    if [[ $ready -eq $desired ]]
+    if [[ "$desired" != "0" ]] && [[ "$ready" == "$desired" ]]
     then
        return 0
     else
