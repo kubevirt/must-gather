@@ -34,8 +34,11 @@ oc create -f $DAEMONSET_MANIFEST
 
 COUNTER=0
 until check_node_gather_pods_ready || [ $COUNTER -eq 300 ]; do
-   (( COUNTER++ ))
-   sleep 1
+    if [[ $(( COUNTER % 20 )) == 0 ]]; then
+        echo "Waiting for node-gather-daemonset to be ready"
+    fi
+    (( COUNTER++ ))
+    sleep 1
 done
 
 for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName --no-headers --field-selector=status.phase!=Running -n node-gather)
