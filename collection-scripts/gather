@@ -39,6 +39,10 @@ resources+=(nodenetworkstates)
 # ImageStreamTag
 resources+=(istag)
 
+# Nodes and Machines
+resources+=(nodes)
+resources+=(machines)
+
 # Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
   /usr/bin/oc adm inspect --dest-dir must-gather --all-namespaces ${resource}
