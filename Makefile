@@ -8,6 +8,9 @@ endif
 
 build: docker-build docker-push
 
+check:
+	shellcheck collection-scripts/*
+
 docker-build:
 	docker build -t ${IMAGE_REGISTRY}/${MUST_GATHER_IMAGE}:${IMAGE_TAG} .
 
