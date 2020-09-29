@@ -5,12 +5,12 @@ resources=()
 
 for i in $(/usr/bin/oc get virtualmachines --all-namespaces --no-headers | awk '{print $1}')
 do
-  resources+=(ns/$i)
+  resources+=("ns/$i")
 done
 
 # Run the collection of resources using must-gather
-for resource in ${resources[@]}; do
-  /usr/bin/oc adm inspect --dest-dir must-gather ${resource}
+for resource in "${resources[@]}"; do
+  /usr/bin/oc adm inspect --dest-dir must-gather "${resource}"
 done
 
 exit 0

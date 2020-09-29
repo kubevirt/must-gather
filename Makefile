@@ -8,6 +8,7 @@ endif
 
 build: docker-build docker-push
 
+# check
 check:
 	shellcheck collection-scripts/*
 
