@@ -1,0 +1,15 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+
+aliases:
+  approvers:
+      - nunnatsa
+      - orenc1
+      - tiraboschi
+      - yuvalturg
+      - sradco
+  code-reviewers:
+      - nunnatsa
+      - orenc1
+      - tiraboschi
+      - yuvalturg
+      - sradco
