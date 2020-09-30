@@ -39,6 +39,10 @@ resources+=(nodenetworkstates)
 # ImageStreamTag
 resources+=(istag)
 
+# Nodes and Machines
+resources+=(nodes)
+resources+=(machines)
+
 # Run the collection of resources using must-gather
 for resource in ${resources[@]}; do
     echo "Inspecting resource ${resource}..."
