@@ -1,3 +1,4 @@
+# TEST
 IMAGE_REGISTRY ?= quay.io
 IMAGE_TAG ?= latest
 
