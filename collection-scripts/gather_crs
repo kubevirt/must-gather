@@ -7,23 +7,23 @@ resources=()
 
 for i in $(/usr/bin/oc get crd | grep kubevirt.io | awk '{print $1}')
 do
-  resources+=($i)
+  resources+=("$i")
 done
 
 # we use nested loops to nicely output objects partitioned per namespace, kind
-for resource in ${resources[@]}; do
-  /usr/bin/oc get ${resource} --all-namespaces -o custom-columns=NAME:.metadata.name,NAMESPACE:.metadata.namespace --no-headers 2> /dev/null | \
-  while read ocresource; do
-    ocobject=$(echo $ocresource | awk '{print $1}')
-    ocproject=$(echo $ocresource | awk '{print $2}')
+for resource in "${resources[@]}"; do
+  /usr/bin/oc get "${resource}" --all-namespaces -o custom-columns=NAME:.metadata.name,NAMESPACE:.metadata.namespace --no-headers 2> /dev/null | \
+  while read -r ocresource; do
+    ocobject=$(echo "$ocresource" | awk '{print $1}')
+    ocproject=$(echo "$ocresource" | awk '{print $2}')
     if [ -z "${ocproject}" ]|[ "${ocproject}" == "<none>" ]; then
       object_collection_path=${BASE_COLLECTION_PATH}/cluster-scoped-resources/${resource}
-      mkdir -p ${object_collection_path}
-      /usr/bin/oc get ${resource} -o yaml ${ocobject} > ${object_collection_path}/${ocobject}.yaml
+      mkdir -p "${object_collection_path}"
+      /usr/bin/oc get "${resource}" -o yaml "${ocobject}" > "${object_collection_path}/${ocobject}.yaml"
     else
       object_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/crs/${resource}
-      mkdir -p ${object_collection_path}
-      /usr/bin/oc get ${resource} -n ${ocproject} -o yaml ${ocobject} > ${object_collection_path}/${ocobject}.yaml
+      mkdir -p "${object_collection_path}"
+      /usr/bin/oc get "${resource}" -n "${ocproject}" -o yaml "${ocobject}" > "${object_collection_path}/${ocobject}.yaml"
     fi
   done
 done

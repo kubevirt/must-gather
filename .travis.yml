@@ -1,12 +1,15 @@
-language: generic
+language: shell
+
 services:
 - docker
+
 jobs:
   include:
   - stage: Build
     name: Build
     if: type = pull_request
     script:
+    - make check MUST_GATHER_IMAGE=kubevirt/must-gather
     - make docker-build MUST_GATHER_IMAGE=kubevirt/must-gather
   - stage: Push
     name: Push
@@ -14,6 +17,7 @@ jobs:
     script:
     - echo $QUAY_PASSWORD | docker login -u $QUAY_USERNAME --password-stdin quay.io
     - make build MUST_GATHER_IMAGE=kubevirt/must-gather
+
 env:
   global:
   # QUAY_USERNAME

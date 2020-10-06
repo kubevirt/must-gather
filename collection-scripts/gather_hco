@@ -13,12 +13,12 @@ oc get packagemanifest -n $NS -o yaml >>${NAMESPACE_PATH}/${NS}/packagemanifests
 
 for name in $(oc get subscriptions -n $NS -o=custom-columns=NAME:.metadata.name --no-headers)
 do
-    oc get subscription $name -n $NS -o yaml >> ${NAMESPACE_PATH}/${NS}/subscriptions
-    echo '---------------' >> ${NAMESPACE_PATH}/${NS}/subscriptions
+    oc get subscription "$name" -n "$NS" -o yaml >> "${NAMESPACE_PATH}/${NS}/subscriptions"
+    echo '---------------' >> "${NAMESPACE_PATH}/${NS}/subscriptions"
 done
 
 for name in $(oc get installplan -n $NS -o=custom-columns=NAME:.metadata.name --no-headers)
 do
-    oc get installplan $name -n $NS -o yaml >> ${NAMESPACE_PATH}/${NS}/installplans
-    echo '---------------' >> ${NAMESPACE_PATH}/${NS}/installplans
+    oc get installplan "$name" -n "$NS" -o yaml >> "${NAMESPACE_PATH}/${NS}/installplans"
+    echo '---------------' >> "${NAMESPACE_PATH}/${NS}/installplans"
 done
