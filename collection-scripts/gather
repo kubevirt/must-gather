@@ -34,7 +34,7 @@ resources+=(ns/cdi)
 resources+=(datavolumes)
 
 # NodeNetworkState
-resources+=(nodenetworkstates)
+resources+=(nodenetworkstates nodenetworkconfigurationenactments nodenetworkconfigurationpolicies)
 
 # ImageStreamTag
 resources+=(istag)
