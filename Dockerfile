@@ -2,8 +2,10 @@ FROM quay.io/openshift/origin-must-gather:4.3.0 as builder
 
 FROM centos:7
 
+RUN yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+
 # For gathering data from nodes
-RUN yum update -y && yum install iproute tcpdump pciutils util-linux nftables rsync -y && yum clean all
+RUN yum update -y && yum install jq iproute tcpdump pciutils util-linux nftables rsync -y && yum clean all
 
 COPY --from=builder /usr/bin/oc /usr/bin/oc
 
