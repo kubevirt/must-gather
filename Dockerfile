@@ -1,9 +1,9 @@
-FROM quay.io/openshift/origin-must-gather:4.3.0 as builder
+FROM quay.io/openshift/origin-must-gather:4.8.0 as builder
 
-FROM centos:7
+FROM quay.io/centos/centos:8
 
 # For gathering data from nodes
-RUN yum update -y && yum install iproute tcpdump pciutils util-linux nftables rsync -y && yum clean all
+RUN dnf update -y && dnf install iproute tcpdump pciutils util-linux nftables rsync -y && dnf clean all
 
 COPY --from=builder /usr/bin/oc /usr/bin/oc
 
