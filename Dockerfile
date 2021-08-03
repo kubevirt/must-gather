@@ -2,6 +2,8 @@ FROM quay.io/openshift/origin-must-gather:4.8.0 as builder
 
 FROM quay.io/centos/centos:8
 
+ENV INSTALLATION_NAMESPACE kubevirt-hyperconverged
+
 # For gathering data from nodes
 RUN dnf update -y && dnf install iproute tcpdump pciutils util-linux nftables rsync -y && dnf clean all
 

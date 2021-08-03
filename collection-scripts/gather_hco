@@ -5,20 +5,20 @@ IFS=$'\n'
 BASE_COLLECTION_PATH="/must-gather"
 
 NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
-NS=openshift-cnv
+INSTALLATION_NAMESPACE="${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}"
 
-mkdir -p ${NAMESPACE_PATH}/${NS}
+mkdir -p "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}"
 
-oc get packagemanifest -n $NS -o yaml >>${NAMESPACE_PATH}/${NS}/packagemanifests
+oc get packagemanifest -n "${INSTALLATION_NAMESPACE}" -o yaml >> "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}/packagemanifests"
 
-for name in $(oc get subscriptions -n $NS -o=custom-columns=NAME:.metadata.name --no-headers)
+for name in $(oc get subscriptions -n "${INSTALLATION_NAMESPACE}" -o=custom-columns=NAME:.metadata.name --no-headers)
 do
-    oc get subscription "$name" -n "$NS" -o yaml >> "${NAMESPACE_PATH}/${NS}/subscriptions"
-    echo '---------------' >> "${NAMESPACE_PATH}/${NS}/subscriptions"
+    oc get subscription "$name" -n "${INSTALLATION_NAMESPACE}" -o yaml >> "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}/subscriptions"
+    echo '---------------' >> "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}/subscriptions"
 done
 
-for name in $(oc get installplan -n $NS -o=custom-columns=NAME:.metadata.name --no-headers)
+for name in $(oc get installplan -n "${INSTALLATION_NAMESPACE}" -o=custom-columns=NAME:.metadata.name --no-headers)
 do
-    oc get installplan "$name" -n "$NS" -o yaml >> "${NAMESPACE_PATH}/${NS}/installplans"
-    echo '---------------' >> "${NAMESPACE_PATH}/${NS}/installplans"
+    oc get installplan "$name" -n "${INSTALLATION_NAMESPACE}" -o yaml >> "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}/installplans"
+    echo '---------------' >> "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}/installplans"
 done

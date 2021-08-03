@@ -1,10 +1,12 @@
 #!/bin/bash
 
+INSTALLATION_NAMESPACE=${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}
+
 # Resource list
 resources=()
 
 # KubeVirt HCO related namespaces
-resources+=(ns/openshift-cnv ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
+resources+=("ns/${INSTALLATION_NAMESPACE}" ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
 
 # KubeVirt network related namespaces
 resources+=(ns/cluster-network-addons ns/openshift-sdn ns/sriov-network-operator)
