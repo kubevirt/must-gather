@@ -3,39 +3,10 @@ module github.com/kubevirt/must-gather/tests
 go 1.16
 
 require (
-	github.com/Azure/go-autorest/autorest v0.11.18
-	github.com/Azure/go-autorest/autorest/adal v0.9.13
-	github.com/davecgh/go-spew v1.1.1
-	github.com/gogo/protobuf v1.3.2
-	github.com/golang/protobuf v1.5.2
-	github.com/google/go-cmp v0.5.5
-	github.com/google/gofuzz v1.1.0
-	github.com/googleapis/gnostic v0.5.5
-	github.com/imdario/mergo v0.3.5
-	github.com/json-iterator/go v1.1.11
-	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd
-	github.com/modern-go/reflect2 v1.0.1
 	github.com/onsi/ginkgo v1.16.4
 	github.com/onsi/gomega v1.13.0
-	github.com/spf13/pflag v1.0.5
-	golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
-	golang.org/x/net v0.0.0-20210520170846-37e1c6afe023
-	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
-	golang.org/x/sys v0.0.0-20210616094352-59db8d763f22
-	golang.org/x/term v0.0.0-20210220032956-6a3ed077a48d
-	golang.org/x/text v0.3.6
-	golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac
-	google.golang.org/protobuf v1.26.0
-	gopkg.in/inf.v0 v0.9.1
-	gopkg.in/yaml.v2 v2.4.0
-	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
-	k8s.io/api v0.22.0
 	k8s.io/apimachinery v0.22.0
 	k8s.io/client-go v0.22.0
-	k8s.io/klog/v2 v2.9.0
-	k8s.io/utils v0.0.0-20210707171843-4b05e18ac7d9
-	sigs.k8s.io/structured-merge-diff/v4 v4.1.2
-	sigs.k8s.io/yaml v1.2.0
 )
 
 exclude k8s.io/cluster-bootstrap v0.0.0
