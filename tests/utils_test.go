@@ -18,20 +18,18 @@ import (
     "k8s.io/client-go/tools/clientcmd"
 )
 
-func init() {
-    var envSet bool
-    kubeconfig, envSet = os.LookupEnv("KUBECONFIG")
-    if !envSet {
-        flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
-        flag.Parse()
+var JunitOutputFile string
 
-        if !path.IsAbs(kubeconfig) {
-            wd, err := os.Getwd()
-            if err != nil {
-                panic(err)
-            }
-            kubeconfig = path.Join(wd, kubeconfig)
-        }
+func init() {
+
+    flag.StringVar(&JunitOutputFile, "junit-output", "", "Set path to Junit report.")
+    flag.Parse()
+
+    envSet := false
+    kubeconfig, envSet = os.LookupEnv("KUBECONFIG")
+
+    if !envSet {
+        panic("the KUBECONFIG environment variable is not set")
     }
 
     clusterConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
