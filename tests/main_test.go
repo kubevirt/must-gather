@@ -1,7 +1,8 @@
 package tests_test
 
 import (
-    "testing"
+	"github.com/onsi/ginkgo/reporters"
+	"testing"
 
     . "github.com/onsi/ginkgo"
     . "github.com/onsi/gomega"
@@ -14,5 +15,11 @@ var (
 
 func TestTests(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Tests Suite")
+
+	customReporters := make([]Reporter, 0, 1)
+	if JunitOutputFile != "" {
+		customReporters = append(customReporters, reporters.NewJUnitReporter(JunitOutputFile))
+	}
+
+	RunSpecsWithDefaultAndCustomReporters(t, "Tests Suite", customReporters)
 }
