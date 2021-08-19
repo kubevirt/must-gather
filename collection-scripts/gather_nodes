@@ -95,6 +95,9 @@ gather_single_pod() {
     if oc exec "$pod" -n node-gather -- [ -f /host/etc/pcidp/config.json ] 2>/dev/null; then
         oc cp "$pod:/host/etc/pcidp/config.json" "$NODE_PATH/pcidp_config.json" -n node-gather 2>/dev/null
     fi
+    if oc exec "$pod" -n node-gather -- [ -f /host/var/log/audit/audit.log ] 2>/dev/null; then
+        oc cp "$pod:/host/var/log/audit/audit.log" "$NODE_PATH/audit.log" -n node-gather 2>/dev/null
+    fi
 }
 
 for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather)
