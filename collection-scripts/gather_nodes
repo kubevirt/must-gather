@@ -108,7 +108,7 @@ done
 wait
 
 # Collect journal logs for specified units for all nodes
-NODE_UNITS=(NetworkManager kubelet)
+NODE_UNITS=(NetworkManager)
 for NODE in $(oc get nodes --no-headers -o custom-columns=':metadata.name'); do
     NODE_PATH=${NODES_PATH}/$NODE
     mkdir -p "${NODE_PATH}"
