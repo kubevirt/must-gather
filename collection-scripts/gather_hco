@@ -11,6 +11,7 @@ mkdir -p "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}"
 
 oc get packagemanifest -n "${INSTALLATION_NAMESPACE}" -o yaml >> "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}/packagemanifests"
 
+
 for name in $(oc get subscriptions -n "${INSTALLATION_NAMESPACE}" -o=custom-columns=NAME:.metadata.name --no-headers)
 do
     oc get subscription "$name" -n "${INSTALLATION_NAMESPACE}" -o yaml >> "${NAMESPACE_PATH}/${INSTALLATION_NAMESPACE}/subscriptions"
