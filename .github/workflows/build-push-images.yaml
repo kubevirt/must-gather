@@ -1,0 +1,31 @@
+name: Build and Push Images
+
+on:
+  push:
+    branches:
+      - main
+      - release-*
+jobs:
+  build_push:
+    if: (github.repository == 'kubevirt/must-gather')
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    env:
+      QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+      QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+      REGISTRY_NAMESPACE: kubevirt
+    steps:
+      - name: Checkout the latest code
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.ref }}
+      - name: Check build
+        run: |
+          make check MUST_GATHER_IMAGE=$REGISTRY_NAMESPACE/must-gather
+      - name: Build image
+        run: |
+          make docker-build MUST_GATHER_IMAGE=$REGISTRY_NAMESPACE/must-gather
+      - name: Push image
+        run: |
+          echo $QUAY_PASSWORD | docker login -u $QUAY_USERNAME --password-stdin quay.io
+          make build MUST_GATHER_IMAGE=$REGISTRY_NAMESPACE/must-gather
