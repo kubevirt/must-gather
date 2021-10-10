@@ -1,15 +1,17 @@
 #!/bin/bash
+
 BASE_COLLECTION_PATH="/must-gather"
 
-for i in $(/usr/bin/oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
-do
-  ocproject=$(echo "$i" | awk -F_ '{print $1}')
-  ocvm=$(echo "$i" | awk -F_ '{print $2}')
-  vm_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms
-
+function gather_vm_info() {
+  ocproject=$1
+  ocvm=$2
+  vmname=$3
+  vm_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms/${vmname}
   mkdir -p "${vm_collection_path}"
 
-  vmname=$(echo "${ocvm}" 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//")
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject pod $ocvm
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject virtualmachines $vmname
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject virtualmachineinstances $vmname
 
   # VM : dumpxml
   /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh dumpxml "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.dumpxml.xml"
@@ -51,7 +53,40 @@ do
     echo "###################################"
     /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- iptables -t nat -L 2>/dev/null
   } > "${vm_collection_path}/${ocvm}.iptables.txt"
+}
 
-done
+if [[ -n $NS ]]; then
+  NS=${NS} /usr/bin/gather_vms_namespaces
+
+  if [[ -n $VM ]]; then
+    POD=$(oc get pod -n ${NS} --no-headers -o 'custom-columns=name:metadata.name' | grep -E "virt-launcher-${VM}-[^-]+$")
+    gather_vm_info ${NS} ${POD} ${VM}
+  else
+    for i in $(/usr/bin/oc get pod -n $NS -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
+    do
+      ocvm=$(echo "$i" | awk -F_ '{print $1}')
+      vmname=$(echo "${ocvm}" 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//")
+
+      gather_vm_info ${NS} ${ocvm} ${vmname}
+    done
+  fi
+
+else
+  /usr/bin/gather_vms_namespaces
+
+  if [[ -n $VM ]]; then
+    echo "ERROR: can't collect information for a specific VM without specifying the namespace"
+    exit 1
+  fi
+
+  for i in $(/usr/bin/oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
+  do
+    ocproject=$(echo "$i" | awk -F_ '{print $1}')
+    ocvm=$(echo "$i" | awk -F_ '{print $2}')
+    vmname=$(echo "${ocvm}" 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//")
+
+    gather_vm_info ${ocproject} ${ocvm} ${vmname}
+  done
+fi
 
 exit 0

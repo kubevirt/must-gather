@@ -17,10 +17,31 @@ You will get a dump of:
 - All namespaces (and their children objects) that belong to any KubeVirt resources
 - All KubeVirt CRD's definitions
 - All namspaces that contains VMs
-- All VMs definition
+
+By default, the VMs definitions won't be included, but only the VM Instances' custom resources.
 
 In order to get data about other parts of the cluster (not specific to KubeVirt) you should
 run `oc adm must-gather` (without passing a custom image). Run `oc adm must-gather -h` to see more options.
+
+#### Targeted gathering
+To collect the VM information, call directly the `gather_vms_details` command:
+```sh
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather_vms_details
+```
+
+The `gather_vms_details` command supports targeted gathering. By specifying a namespace, the command will only 
+collect the VMs in this namespace. For example, collecting all the VM information in namespace "vm1":
+```sh
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- NS=ns1 /usr/bin/gather_vms_details
+```
+
+By specifying the VM name in addition to the namespace, the `gather_vms_details` command will only collect the specific
+VM information. For example, collecting the information of a specific VM called "testvm" in namespace "vm1":
+```sh
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- NS=ns1 VM=testvm /usr/bin/gather_vms_details
+```
+***Note***: When collecting information for a specific VM, you must specify the namespace as well. Without the namespace,
+the `gather_vms_details` command exits and prints an error message.
 
 ### Development
 You can build the image locally using the Dockerfile included.
