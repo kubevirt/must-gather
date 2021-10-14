@@ -1,16 +1,24 @@
 #!/bin/bash
 
+BASE_COLLECTION_PATH="/must-gather"
+
 # Resource list
 resources=()
 
-for i in $(/usr/bin/oc get virtualmachines --all-namespaces --no-headers | awk '{print $1}')
-do
-  resources+=("ns/$i")
-done
+if [[ -n $NS ]]; then
+  resources=("ns/$NS")
+else
+  for i in $(/usr/bin/oc get virtualmachines --all-namespaces --no-headers | awk '{print $1}')
+  do
+    resources+=("ns/$i")
+  done
+fi
+
+unique_resources=$(echo ${resources[@]} | tr ' ' '\n' | sort -u | tr '\n' ' ')
 
 # Run the collection of resources using must-gather
-for resource in "${resources[@]}"; do
-  /usr/bin/oc adm inspect --dest-dir must-gather "${resource}"
+for resource in "${unique_resources[@]}"; do
+  /usr/bin/oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} ${resource}
 done
 
 exit 0
