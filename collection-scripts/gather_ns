@@ -1,0 +1,21 @@
+#!/bin/bash
+
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
+INSTALLATION_NAMESPACE=${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}
+
+namespaces=()
+# KubeVirt HCO related namespaces
+namespaces+=("${INSTALLATION_NAMESPACE}" openshift-operator-lifecycle-manager openshift-marketplace)
+
+# KubeVirt network related namespaces
+namespaces+=(cluster-network-addons openshift-sdn sriov-network-operator)
+
+# KubeVirt Web UI namespaces
+namespaces+=(kubevirt-web-ui)
+
+# CDI
+resources+=(cdi)
+
+# Run the collection of namespaces using must-gather
+echo ${namespaces[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} namespace $1' -- {}
