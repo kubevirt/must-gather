@@ -1,38 +1,43 @@
 #!/bin/bash
 
-IFS=$'\n'
+# Workaround for: https://github.com/openshift/must-gather/issues/122
 
-BASE_COLLECTION_PATH="/must-gather"
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
 
-IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources
-NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
+IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources/images
+export NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
 
+function gather_imagestream() {
+  namespace=$(echo $1 | awk -F_ '{print $1}')
+  name=$(echo $1 | awk -F_ '{print $2}')
+
+  echo "Gathering imagestream ${namespace}/${name}"
+  mkdir -p "${NAMESPACE_PATH}/${namespace}/imagestreams"
+  oc get imagestream "${name}" -n "${namespace}" -o yaml > "${NAMESPACE_PATH}/${namespace}/imagestreams/${name}.yaml"
+}
+
+function gather_imagestreamtag() {
+  namespace=$(echo $1 | awk -F_ '{print $1}')
+  name=$(echo $1 | awk -F_ '{print $2}')
+
+  echo "Gathering imagestreamtags ${namespace}/${name}"
+  mkdir -p "${NAMESPACE_PATH}/${namespace}/imagestreamtags"
+  oc get imagestreamtag "${name}" -n "${namespace}" -o yaml > "${NAMESPACE_PATH}/${namespace}/imagestreamtags/${name}.yaml"
+}
+
+export -f gather_imagestream
+export -f gather_imagestreamtag
+
+echo "gather images"
 mkdir -p ${IMAGES_PATH}
-for name in $(oc get image -o=custom-columns=NAME:.metadata.name --no-headers)
-do
-    echo "Gathering image $name"
-    oc get image "$name" -o yaml >> "${IMAGES_PATH}/images"
-    echo '---------------' >> "${IMAGES_PATH}/images"
-done
+images=$(oc get image -o=custom-columns=NAME:.metadata.name --no-headers)
+echo ${images[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'oc get image $1 -o yaml > $2' -- {} "${IMAGES_PATH}/{}.yaml"
 
-for line in $(oc get imagestreams -o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers --all-namespaces)
-do
-    IFS=$' '
-    read -r namespace name <<< "$line"
-    IFS=$'\n'
-    echo "Gathering imagestream $namespace/$name"
-    mkdir -p "${NAMESPACE_PATH}/${namespace}"
-    oc get imagestream "${name}" -n "${namespace}" -o yaml >> "${NAMESPACE_PATH}/${namespace}/imagestreams"
-    echo '---------------' >> "${NAMESPACE_PATH}/${namespace}/imagestreams"
-done
+echo "gather imagestreams"
+imagestreams=$(oc get imagestreams --no-headers --all-namespaces | awk '{print $1 "_" $2}')
+echo ${imagestreams[@]} | tr ' ' '\n' | xargs -t -i{} -P ${PROS} --max-args=1 sh -c 'gather_imagestream "$1"' -- {}
 
-for line in $(oc get imagestreamtags -o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers --all-namespaces)
-do
-    IFS=$' '
-    read -r namespace name <<< "$line"
-    IFS=$'\n'
-    echo "Gathering imagestreamtag $namespace/$name"
-    mkdir -p "${NAMESPACE_PATH}/${namespace}"
-    oc get imagestreamtag "${name}" -n "${namespace}" -o yaml >> "${NAMESPACE_PATH}/${namespace}/imagestreamtags"
-    echo '---------------' >> "${NAMESPACE_PATH}/${namespace}/imagestreamtags"
-done
+echo "gather imagestreamtags"
+imagestreamtags=$(oc get imagestreamtags --no-headers --all-namespaces | awk '{print $1 "_" $2}')
+echo ${imagestreamtags[@]} | tr ' ' '\n' | xargs -t -i{} -P ${PROS} --max-args=1 sh -c 'gather_imagestreamtag "$1"' -- {}
