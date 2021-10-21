@@ -1,28 +1,37 @@
 #!/bin/bash
 
-BASE_COLLECTION_PATH="/must-gather"
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
 
-# we use nested loops to nicely output objects partitioned per namespace, kind
-for resource in $(/usr/bin/oc get validatingwebhookconfiguration -o custom-columns=NAME:.metadata.name --no-headers); do
-  webhooks_collection_path=${BASE_COLLECTION_PATH}/webhooks/validating/${resource}
+function gather_validating_wh() {
+  webhooks_collection_path=${BASE_COLLECTION_PATH}/webhooks/validating/${1}
+  mkdir -p "${webhooks_collection_path}"
+
+  /usr/bin/oc get validatingwebhookconfiguration "${1}" -o yaml | grep -vi cabundle > "${webhooks_collection_path}/validatingwebhookconfiguration.yaml"
+
+  # fetch the service associated with webhook
+  /usr/bin/oc get validatingwebhookconfiguration "${1}" -o=go-template --template='{{ range .webhooks }}-n {{.clientConfig.service.namespace}} {{.clientConfig.service.name}}{{ "\n" }}{{ end }}' | uniq | xargs /usr/bin/oc get service -o yaml > "${webhooks_collection_path}/service.yaml"
+}
+
+function gather_mutating_wh() {
+  webhooks_collection_path=${BASE_COLLECTION_PATH}/webhooks/mutating/${1}
 
   mkdir -p "${webhooks_collection_path}"
 
-  /usr/bin/oc get validatingwebhookconfiguration "${resource}" -o yaml | grep -vi cabundle > "${webhooks_collection_path}/validatingwebhookconfiguration.yaml"
-
+  /usr/bin/oc get mutatingwebhookconfiguration "${1}" -o yaml | grep -vi cabundle > "${webhooks_collection_path}/mutatingwebhookconfiguration.yaml"
   # fetch the service associated with webhook
-  /usr/bin/oc get validatingwebhookconfiguration "${resource}" -o=go-template --template='{{ range .webhooks }}-n {{.clientConfig.service.namespace}} {{.clientConfig.service.name}}{{ "\n" }}{{ end }}' | uniq | xargs /usr/bin/oc get service -o yaml > "${webhooks_collection_path}/service.yaml"
-done
+  /usr/bin/oc get mutatingwebhookconfiguration "${1}" -o=go-template --template='{{ range .webhooks }}-n {{.clientConfig.service.namespace}} {{.clientConfig.service.name}}{{ "\n" }}{{ end }}' | uniq | xargs /usr/bin/oc get service -o yaml > "${webhooks_collection_path}/service.yaml"
+}
+
+export -f gather_validating_wh
+export -f gather_mutating_wh
 
 # we use nested loops to nicely output objects partitioned per namespace, kind
-for resource in $(/usr/bin/oc get mutatingwebhookconfiguration -o custom-columns=NAME:.metadata.name --no-headers); do
-  webhooks_collection_path=${BASE_COLLECTION_PATH}/webhooks/mutating/${resource}
+validating_wh=$(/usr/bin/oc get validatingwebhookconfiguration -o custom-columns=NAME:.metadata.name --no-headers)
+echo ${validating_wh[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_validating_wh $1' -- {}
 
-  mkdir -p "${webhooks_collection_path}"
-
-  /usr/bin/oc get mutatingwebhookconfiguration "${resource}" -o yaml | grep -vi cabundle > "${webhooks_collection_path}/mutatingwebhookconfiguration.yaml"
-  # fetch the service associated with webhook
-  /usr/bin/oc get mutatingwebhookconfiguration "${resource}" -o=go-template --template='{{ range .webhooks }}-n {{.clientConfig.service.namespace}} {{.clientConfig.service.name}}{{ "\n" }}{{ end }}' | uniq | xargs /usr/bin/oc get service -o yaml > "${webhooks_collection_path}/service.yaml"
-done
+# we use nested loops to nicely output objects partitioned per namespace, kind
+mutating_wh=$(/usr/bin/oc get mutatingwebhookconfiguration -o custom-columns=NAME:.metadata.name --no-headers)
+echo ${mutating_wh[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_mutating_wh $1' -- {}
 
 exit 0

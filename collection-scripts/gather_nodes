@@ -1,4 +1,8 @@
 #!/bin/bash
+set -x
+
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
 
 check_node_gather_pods_ready() {
     line=$(oc get ds node-gather-daemonset -o=custom-columns=DESIRED:.status.desiredNumberScheduled,READY:.status.numberReady --no-headers -n node-gather)
@@ -17,7 +21,6 @@ check_node_gather_pods_ready() {
 
 IFS=$'\n'
 
-BASE_COLLECTION_PATH="/must-gather"
 NODES_PATH=${BASE_COLLECTION_PATH}/nodes
 mkdir -p ${NODES_PATH}
 CRD_MANIFEST="/etc/node-gather-crd.yaml"
@@ -46,7 +49,7 @@ do
     echo "Failed to collect node-gather data from node ${line} due to pod scheduling failure." >> ${NODES_PATH}/skipped_nodes.txt
 done
 
-gather_single_pod() {
+function gather_single_pod() {
     line="$1"
 
     node=$(echo "$line" | awk -F ' ' '{print $1}')
@@ -100,22 +103,15 @@ gather_single_pod() {
     fi
 }
 
-for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather)
-do
-    gather_single_pod "$line" &
-done
+export -f gather_single_pod
+pods=$(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather)
+echo ${pods[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_single_pod "$1"' -- {}
 
-wait
+# wait
 
 # Collect journal logs for specified units for all nodes
-NODE_UNITS=(NetworkManager)
-for NODE in $(oc get nodes --no-headers -o custom-columns=':metadata.name'); do
-    NODE_PATH=${NODES_PATH}/$NODE
-    mkdir -p "${NODE_PATH}"
-    for UNIT in "${NODE_UNITS[@]}"; do
-        oc adm node-logs "$NODE" -u "$UNIT" > "${NODE_PATH}/${NODE}_logs_$UNIT" &
-    done
-done
+nodes=$(oc get nodes --no-headers -o custom-columns=':metadata.name')
+echo ${nodes[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'mkdir -p $2; oc adm node-logs "$1" -u NetworkManager > "$2/${1}_logs_NetworkManager"' -- {} ${NODES_PATH}/{}
 
 oc delete -f $DAEMONSET_MANIFEST
 oc delete -f $CRD_MANIFEST

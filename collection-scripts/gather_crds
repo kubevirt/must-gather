@@ -1,16 +1,14 @@
 #!/bin/bash
 
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
+
 # Resource list
-resources=()
+crds=()
 
-for i in $(/usr/bin/oc get crd | grep kubevirt.io | awk '{print $1}')
-do
-  resources+=("crd/$i")
-done
+CRDS=$(/usr/bin/oc get crd | grep kubevirt.io | awk '{print $1}')
 
-# Run the collection of resources using must-gather
-for resource in "${resources[@]}"; do
-  /usr/bin/oc adm inspect --dest-dir must-gather "${resource}"
-done
+# Run the collection of crds using must-gather
+echo ${CRDS[@]} | tr ' ' '\n' | xargs -t -I{}  -P ${PROS} --max-args=1 sh -c '/usr/bin/oc adm inspect crd --dest-dir ${BASE_COLLECTION_PATH} $1' -- {}
 
 exit 0

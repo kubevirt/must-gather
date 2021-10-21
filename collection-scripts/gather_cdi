@@ -1,30 +1,38 @@
 #!/bin/bash
 
-BASE_COLLECTION_PATH="/must-gather"
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
 
-for ns in $(oc get namespace "$ns" --no-headers -o=custom-columns=NAME:.metadata.name 2> /dev/null)
-do
-    ns_collection_path=$BASE_COLLECTION_PATH/namespaces/$ns/
-    mkdir -p "$ns_collection_path"
+function gather_cdi_pod() {
+  line=$1
+  ns=$(echo $line | awk -F_ '{print $1}')
+  pod=$(echo $line | awk -F_ '{print $2}')
 
-    for pod in $(oc get pods -n "$ns" -l cdi.kubevirt.io --no-headers -o=custom-columns=NAME:.metadata.name 2>/dev/null)
-    do
-        echo "NS: $ns, POD: $pod"
-        pod_collection_path=$ns_collection_path/$pod
-        mkdir -p "$pod_collection_path"
+  echo "NS: $ns, POD: $pod"
+  pod_collection_path="${BASE_COLLECTION_PATH}/namespaces/${ns}/${pod}"
+  mkdir -p "${pod_collection_path}"
 
-        /usr/bin/oc adm inspect --dest-dir must-gather -n "$ns" "pod/$pod"
-        oc logs "$pod" -n "$ns" > "$pod_collection_path/$pod.log"
-    done
+  oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "$ns" "pod/$pod"
+  oc logs "$pod" -n "$ns" > "$pod_collection_path/$pod.log"
+}
 
-    for pvc in $(oc get pvc -n "$ns" --no-headers -o=custom-columns=NAME:.metadata.name 2>/dev/null)
-    do
-        echo "NS: $ns, PVC: $pvc"
-        pvc_collection_path=$ns_collection_path/core/persistentvolumeclaims
-        mkdir -p "$pvc_collection_path"
+function gather_pvc() {
+  line=$1
+  ns=$(echo $line | awk -F_ '{print $1}')
+  pvc=$(echo $line | awk -F_ '{print $2}')
 
-        /usr/bin/oc adm inspect --dest-dir must-gather -n "$ns" "pvc/$pvc"
-        oc describe pvc "$pvc" -n "$ns" > "$pvc_collection_path/${pvc}_describe.txt"
-    done
+  echo "NS: $ns, PVC: $pvc"
+  pvc_collection_path="${BASE_COLLECTION_PATH}/namespaces/${ns}/core/persistentvolumeclaims"
+  mkdir -p "$pvc_collection_path"
 
-done
+  /usr/bin/oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} -n "$ns" "pvc/${pvc}"
+  oc describe pvc "$pvc" -n "$ns" > "${pvc_collection_path}/${pvc}_describe.txt"
+}
+
+export -f gather_cdi_pod
+cdi_pods=$(oc get pods -l cdi.kubevirt.io --no-headers -A | awk '{print $1 "_" $2}')
+echo $cdi_pods | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_cdi_pod $1' -- {}
+
+export -f gather_pvc
+pvcs=$(oc get pvc --no-headers -A | awk '{print $1 "_" $2}')
+echo $pvcs | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_pvc $1' -- {}
