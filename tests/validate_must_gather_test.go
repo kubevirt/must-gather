@@ -229,7 +229,7 @@ var _ = Describe("validate the must-gather output", func() {
 				crDir := path.Join(crsDir, cr.Name())
 				crFiles, err := os.ReadDir(crDir)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(crFiles).Should(HaveLen(1))
+				Expect(crFiles).Should(Not(BeEmpty()))
 
 				if crFiles[0].IsDir() {
 					continue
@@ -267,11 +267,11 @@ var _ = Describe("validate the must-gather output", func() {
 			Expect(expectedResources).To(BeAllTrueInBoolMap())
 
 		},
-			Entry("should gather resources in ns1", "1"),
-			Entry("should gather resources in ns2", "2"),
-			Entry("should gather resources in ns3", "3"),
-			Entry("should gather resources in ns4", "4"),
-			Entry("should gather resources in ns5", "5"),
+			Entry("should gather resources in ns001", "001"),
+			Entry("should gather resources in ns002", "002"),
+			Entry("should gather resources in ns003", "003"),
+			Entry("should gather resources in ns004", "004"),
+			Entry("should gather resources in ns005", "005"),
 		)
 	})
 })
