@@ -4,8 +4,8 @@ set -ex
 
 CMD=oc
 
-# create 100 VMs
-for ns in {001..005}; do
+# create 200 VMs
+for ns in {001..010}; do
   sed "s#__NS__#${ns}#g" automation/ns.yaml | ${CMD} apply -f -
   for vm in {001..020}; do
     sed -e "s#__NS__#${ns}#g" -e "s|##VM##|${vm}|g" automation/vm.yaml >> "vms_ns${ns}.yaml"
