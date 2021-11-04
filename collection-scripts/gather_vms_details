@@ -1,15 +1,20 @@
 #!/bin/bash
-BASE_COLLECTION_PATH="/must-gather"
 
-for i in $(/usr/bin/oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
-do
-  ocproject=$(echo "$i" | awk -F_ '{print $1}')
-  ocvm=$(echo "$i" | awk -F_ '{print $2}')
-  vm_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
+function gather_vm_info() {
+  ocproject=$1
+  ocvm=$2
+  vmname=$3
+
+  vm_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms/${vmname}
   mkdir -p "${vm_collection_path}"
 
-  vmname=$(echo "${ocvm}" 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//")
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject pod $ocvm
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject virtualmachines $vmname
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject virtualmachineinstances $vmname
 
   # VM : dumpxml
   /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh dumpxml "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.dumpxml.xml"
@@ -51,7 +56,46 @@ do
     echo "###################################"
     /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- iptables -t nat -L 2>/dev/null
   } > "${vm_collection_path}/${ocvm}.iptables.txt"
+}
 
-done
+function gather_vm_by_pod_name() {
+  pod=$1
+  ocproject=$(echo "$pod" | awk -F_ '{print $1}')
+  ocvm=$(echo "$pod" | awk -F_ '{print $2}')
+  vmname=$(echo "${ocvm}" 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//")
+
+  gather_vm_info ${ocproject} ${ocvm} ${vmname}
+}
+
+if [[ -n $NS ]]; then
+  BASE_COLLECTION_PATH=${BASE_COLLECTION_PATH} NS=${NS} ${DIR_NAME}/gather_vms_namespaces
+
+  if [[ -n $VM ]]; then
+    POD=$(oc get pod -n ${NS} --no-headers -o 'custom-columns=name:metadata.name' | grep -E "virt-launcher-${VM}-[^-]+$")
+    gather_vm_info ${NS} ${POD} ${VM}
+  else
+    for i in $(/usr/bin/oc get pod -n $NS -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
+    do
+      ocvm=$(echo "$i" | awk -F_ '{print $1}')
+      vmname=$(echo "${ocvm}" 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//")
+
+      gather_vm_info ${NS} ${ocvm} ${vmname}
+    done
+  fi
+
+else
+  BASE_COLLECTION_PATH=${BASE_COLLECTION_PATH} PROS=${PROS} ${DIR_NAME}/gather_vms_namespaces
+
+  if [[ -n $VM ]]; then
+    echo "ERROR: can't collect information for a specific VM without specifying the namespace"
+    exit 1
+  fi
+
+  export -f gather_vm_by_pod_name
+  export -f gather_vm_info
+  export BASE_COLLECTION_PATH=${BASE_COLLECTION_PATH}
+  PODS=$(oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
+  echo ${PODS[@]} | tr ' ' '\n' | xargs -P ${PROS} --max-args=1 -t -I{} sh -c 'gather_vm_by_pod_name $1' -- {}
+fi
 
 exit 0

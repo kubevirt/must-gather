@@ -1,22 +1,14 @@
 #!/bin/bash
 
-BASE_COLLECTION_PATH="/must-gather"
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
 
 # Resource list
-resources=()
+resources=$(/usr/bin/oc get apiservices | grep kubevirt.io | awk '{ print $1 }')
 
-for i in $(/usr/bin/oc get apiservices --all-namespaces | grep kubevirt.io | awk '{ print $1 }')
-do
-  resources+=("$i")
-done
+export apiservice_collection_path=${BASE_COLLECTION_PATH}/apiservices/
+mkdir -p ${apiservice_collection_path}
 
-# we use nested loops to nicely output objects partitioned per namespace, kind
-for resource in "${resources[@]}"; do
-  apiservice_collection_path=${BASE_COLLECTION_PATH}/apiservices/
-
-  mkdir -p ${apiservice_collection_path}
-
-  /usr/bin/oc get apiservice "${resource}" -o yaml > "${apiservice_collection_path}/${resource}.yaml"
-done
+echo ${resources[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c '/usr/bin/oc get apiservice $1 -o yaml > ${apiservice_collection_path}/$1.yaml' -- {}
 
 exit 0

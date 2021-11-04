@@ -1,36 +1,16 @@
 #!/bin/bash
 
-INSTALLATION_NAMESPACE=${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+export PROS=${PROS:-5}
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 # Resource list
 resources=()
 
-# KubeVirt HCO related namespaces
-resources+=("ns/${INSTALLATION_NAMESPACE}" ns/kubevirt-hyperconverged ns/openshift-operator-lifecycle-manager ns/openshift-marketplace)
-
-# KubeVirt network related namespaces
-resources+=(ns/cluster-network-addons ns/openshift-sdn ns/sriov-network-operator)
-
-# KubeVirt Web UI namespaces
-resources+=(ns/kubevirt-web-ui)
-
 # HCO
-resources+=(catalogsource clusterserviceversion)
-
-# VMI
-resources+=(virtualmachineinstances virtualmachineinstancereplicasets virtualmachineinstancepresets virtualmachineinstancemigrations)
-
-# v2v
-resources+=(v2vvmwares virtualmachineimports)
+resources+=(catalogsource)
 
 resources+=(Network-attachment-definitions)
-
-resources+=(networkaddonsconfig)
-
-# CDI
-resources+=(ns/cdi)
-
-resources+=(datavolumes)
 
 # NodeNetworkState
 resources+=(nodenetworkstates nodenetworkconfigurationenactments nodenetworkconfigurationpolicies)
@@ -43,49 +23,39 @@ resources+=(nodes)
 resources+=(machines)
 
 # Run the collection of resources using must-gather
-for resource in "${resources[@]}"; do
-    echo "Inspecting resource ${resource}..."
-    /usr/bin/oc adm inspect --dest-dir must-gather --all-namespaces "${resource}" &> /dev/null
-done
+echo ${resources[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
 
-# VM
-/usr/bin/gather_virtualmachines
+# Collect relevant namespaces data
+${DIR_NAME}/gather_ns
 
 # Collect HCO details (first, because it's there before anything else)
-/usr/bin/gather_hco
+${DIR_NAME}/gather_hco
+
+# Collect HCO details (first, because it's there before anything else)
+${DIR_NAME}/gather_hco
 
 # Collect the CRDs
-/usr/bin/gather_crds
+${DIR_NAME}/gather_crds
 
 # Collect the CRs explicitely - some of them, like VMs, are collected by steps below
-/usr/bin/gather_crs
+${DIR_NAME}/gather_crs
 
 # Collect the apiservices
-/usr/bin/gather_apiservices
-
-# Collect namespaces that contains VMs
-/usr/bin/gather_vms_namespaces
-
-# Collect VMs details
-/usr/bin/gather_vms_details
+${DIR_NAME}/gather_apiservices
 
 # Collect SSP details
-/usr/bin/gather_ssp
+${DIR_NAME}/gather_ssp
 
 # Collect nodes details
-/usr/bin/gather_nodes
+${DIR_NAME}/gather_nodes
 
 # Collect CDI details
-/usr/bin/gather_cdi
+${DIR_NAME}/gather_cdi
 
 # Collect the webhooks
-/usr/bin/gather_webhooks
+${DIR_NAME}/gather_webhooks
 
 # Collect v2v details
-/usr/bin/gather_v2v
-
-# Collect image details
-# Workaround for: https://github.com/openshift/must-gather/issues/122
-/usr/bin/gather_images
+${DIR_NAME}/gather_v2v
 
 exit 0
