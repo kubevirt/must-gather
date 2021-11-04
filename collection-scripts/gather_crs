@@ -1,31 +1,35 @@
 #!/bin/bash
 
-BASE_COLLECTION_PATH="/must-gather"
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+export PROS=${PROS:-5}
+
+function get_cr() {
+  ocobject=$(echo "$2" | awk -F_ '{print $1}')
+  ocproject=$(echo "$2" | awk -F_ '{print $2}')
+
+  if [ -z "${ocproject}" ]|[ "${ocproject}" == "<none>" ]; then
+    object_collection_path="${BASE_COLLECTION_PATH}/cluster-scoped-resources/$1"
+    mkdir -p "${object_collection_path}"
+    oc get "$1" -o yaml "${ocobject}" > "${object_collection_path}/${ocobject}.yaml"
+  else
+    object_collection_path="${BASE_COLLECTION_PATH}/namespaces/${ocproject}/crs/$1"
+    mkdir -p "${object_collection_path}"
+    oc get "$1" -n "${ocproject}" -o yaml "${ocobject}" > "${object_collection_path}/${ocobject}.yaml"
+  fi
+
+}
+
+export -f get_cr
+
+function read_crs() {
+    crs=$(oc get "$1" --all-namespaces -o custom-columns=NAME:.metadata.name,NAMESPACE:.metadata.namespace --no-headers 2> /dev/null | awk '{print $1 "_" $2}')
+    echo ${crs[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'get_cr $1 $2' -- $1 {}
+}
+
+export -f read_crs
 
 # Resource list
-resources=()
-
-for i in $(/usr/bin/oc get crd | grep kubevirt.io | awk '{print $1}')
-do
-  resources+=("$i")
-done
-
-# we use nested loops to nicely output objects partitioned per namespace, kind
-for resource in "${resources[@]}"; do
-  /usr/bin/oc get "${resource}" --all-namespaces -o custom-columns=NAME:.metadata.name,NAMESPACE:.metadata.namespace --no-headers 2> /dev/null | \
-  while read -r ocresource; do
-    ocobject=$(echo "$ocresource" | awk '{print $1}')
-    ocproject=$(echo "$ocresource" | awk '{print $2}')
-    if [ -z "${ocproject}" ]|[ "${ocproject}" == "<none>" ]; then
-      object_collection_path=${BASE_COLLECTION_PATH}/cluster-scoped-resources/${resource}
-      mkdir -p "${object_collection_path}"
-      /usr/bin/oc get "${resource}" -o yaml "${ocobject}" > "${object_collection_path}/${ocobject}.yaml"
-    else
-      object_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/crs/${resource}
-      mkdir -p "${object_collection_path}"
-      /usr/bin/oc get "${resource}" -n "${ocproject}" -o yaml "${ocobject}" > "${object_collection_path}/${ocobject}.yaml"
-    fi
-  done
-done
+resources=$(oc get crd -o=custom-columns=NAME:.metadata.name --no-headers | grep kubevirt.io)
+echo ${resources[@]} | tr ' ' '\n' | xargs -t -I{} sh -c 'read_crs $1' -- {}
 
 exit 0
