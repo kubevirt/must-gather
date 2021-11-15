@@ -1,9 +1,10 @@
-#!/bin/bash
+#!/bin/bash -x
 
 # Workaround for: https://github.com/openshift/must-gather/issues/122
 
 BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 PROS=${PROS:-5}
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources/images
 export NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
@@ -29,6 +30,8 @@ function gather_imagestreamtag() {
 export -f gather_imagestream
 export -f gather_imagestreamtag
 
+${DIR_NAME}/version
+
 echo "gather images"
 mkdir -p ${IMAGES_PATH}
 images=$(oc get image -o=custom-columns=NAME:.metadata.name --no-headers)
@@ -41,3 +44,7 @@ echo ${imagestreams[@]} | tr ' ' '\n' | xargs -t -i{} -P ${PROS} --max-args=1 sh
 echo "gather imagestreamtags"
 imagestreamtags=$(oc get imagestreamtags --no-headers --all-namespaces | awk '{print $1 "_" $2}')
 echo ${imagestreamtags[@]} | tr ' ' '\n' | xargs -t -i{} -P ${PROS} --max-args=1 sh -c 'gather_imagestreamtag "$1"' -- {}
+
+${DIR_NAME}/logs.sh
+
+sync

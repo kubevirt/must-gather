@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+VERSION_FILE=${BASE_COLLECTION_PATH}/version.txt
+
+function version() {
+  # get version from image
+  version=$( \
+    oc status | grep '^pod' | \
+    sed -E "s|^.* runs .+:([^\:]+)$|\1|"
+  )
+
+  # if version not found, fallback to imageID
+  [ -z "${version}" ] && version=$(oc status | grep '^pod.*runs' | sed -r -e 's/^pod.*runs //')
+
+  # if version still not found, use Unknown
+  [ -z "${version}" ] && version="Unknown"
+
+  echo ${version}
+}
+
+if [[ ! -f ${VERSION_FILE} ]]; then
+  # generate /must-gather/version file
+  mkdir -p ${BASE_COLLECTION_PATH}
+  echo "kubevirt/must-gather" > ${VERSION_FILE}
+  version >> ${VERSION_FILE}
+fi
