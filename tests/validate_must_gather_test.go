@@ -21,11 +21,11 @@ var logger = log.New(GinkgoWriter, "", 0)
 var _ = Describe("validate the must-gather output", func() {
 	logger := log.New(GinkgoWriter, "", 0)
 	outputDir, err := getDataDir()
-	It("should find the directory", func() {
+	It("[level:product][level:workloads]should find the directory", func() {
 		Expect(err).ToNot(HaveOccurred())
 	})
 
-	Context("validate the installation namespace", func() {
+	Context("[level:product]validate the installation namespace", func() {
 		It("should validate the kubevirt-hyperconverged/crs directory", func() {
 
 			var installationNamespace = "kubevirt-hyperconverged"
@@ -93,7 +93,7 @@ var _ = Describe("validate the must-gather output", func() {
 		logger.Print("outputDir:", outputDir)
 	})
 
-	Context("validate the cluster scoped resources", func() {
+	Context("[level:product]validate the cluster scoped resources", func() {
 		It("should validate the cluster-scoped-resources directory", func() {
 
 			crsDir := path.Join(outputDir, "cluster-scoped-resources")
@@ -160,7 +160,7 @@ var _ = Describe("validate the must-gather output", func() {
 		logger.Print("outputDir:", outputDir)
 	})
 
-	Context("validate nodes logs", func() {
+	Context("[level:product]validate nodes logs", func() {
 		It("should validate the nodes logs directories", func() {
 
 			expectedResources := []string{
@@ -202,7 +202,7 @@ var _ = Describe("validate the must-gather output", func() {
 		logger.Print("outputDir:", outputDir)
 	})
 
-	Context("validate workloads", func() {
+	Context("[level:workloads]validate workloads", func() {
 		DescribeTable("validate workloads", func(ns string) {
 			expectedResources := map[string]bool{
 				"datavolumes.cdi.kubevirt.io":         false,
