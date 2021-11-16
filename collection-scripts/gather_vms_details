@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 export PROS=${PROS:-5}
@@ -76,6 +76,8 @@ function gather_vm_by_pod_name() {
 export -f gather_vm_by_pod_name
 export -f gather_vm_info
 
+${DIR_NAME}/version
+
 ${DIR_NAME}/gather_vms_namespaces
 
 if [[ -n $NS ]]; then
@@ -102,5 +104,9 @@ else
   echo ${PODS[@]} | tr ' ' '\n' | xargs -P ${PROS} --max-args=1 -t -I{} sh -c 'gather_vm_by_pod_name $1' -- {}
 
 fi
+
+${DIR_NAME}/logs.sh
+
+sync
 
 exit 0

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 export PROS=${PROS:-5}
@@ -21,6 +21,8 @@ resources+=(istag)
 # Nodes and Machines
 resources+=(nodes)
 resources+=(machines)
+
+${DIR_NAME}/version
 
 # Run the collection of resources using must-gather
 echo ${resources[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
@@ -54,5 +56,9 @@ ${DIR_NAME}/gather_cdi
 
 # Collect the webhooks
 ${DIR_NAME}/gather_webhooks
+
+${DIR_NAME}/logs.sh
+
+sync
 
 exit 0

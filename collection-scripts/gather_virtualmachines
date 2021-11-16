@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 BASE_COLLECTION_PATH="/must-gather"
 
