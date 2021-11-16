@@ -1,26 +1,33 @@
 #!/bin/bash -x
 
-BASE_COLLECTION_PATH="/must-gather"
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
 
+function collect_vm() {
+  vm=$1
+  ns=$2
+  ns_path=$3
 
-for i in $(/usr/bin/oc get virtualmachines --all-namespaces --no-headers | awk '{print $1}')
-do
-  resources+=("$i")
-done
+  if oc get -n ${ns} vm ${vm} -o jsonpath='{ .metadata.annotations }' | grep 'vm.kubevirt.io/template'; then
+    vm_path="$ns_path/template-based"
+  else
+    vm_path="$ns_path/custom"
+  fi
 
-for resource in "${resources[@]}"; do
-  for vm in $(/usr/bin/oc get virtualmachine -n "$resource" --no-headers |  awk -F ' ' '{print $1}'); do
-    vm_path="${BASE_COLLECTION_PATH}/namespaces/${resource}/kubevirt.io/virtualmachines"
+  mkdir -p "${vm_path}"
 
-    if [[ $(/usr/bin/oc get virtualmachine "$vm" -o json -n "$resource" | grep -c "vm.kubevirt.io/template") -gt 0 ]]; then
-      vm_path="$vm_path/template-based"
-    else
-      vm_path="$vm_path/custom"
-    fi
-    mkdir -p "${vm_path}"
+  /usr/bin/oc get virtualmachine "$vm" -o yaml -n "$ns" > "$vm_path/$vm.yaml"
+}
 
-    /usr/bin/oc get virtualmachine "$vm" -o yaml -n "$resource" > "$vm_path/$vm.yaml"
-  done
+export -f collect_vm
+
+namespaces=($(/usr/bin/oc get virtualmachines --all-namespaces --no-headers | awk '{print $1}' | uniq))
+
+for ns in "${namespaces[@]}"; do
+  ns_path="${BASE_COLLECTION_PATH}/namespaces/${ns}/kubevirt.io/virtualmachines"
+
+  vms=$(/usr/bin/oc get virtualmachine -n "${ns}" --no-headers -o custom-columns=NAME:.metadata.name)
+  echo ${vms[@]} | tr ' ' '\n' | xargs -t -P ${PROS} --max-args=1 -I{} sh -c 'collect_vm $1 $2 $3' -- {} "${ns}" "${ns_path}"
 done
 
 exit 0
