@@ -28,8 +28,8 @@ function read_crs() {
 
 export -f read_crs
 
-# Resource list
-resources=$(oc get crd -o=custom-columns=NAME:.metadata.name --no-headers | grep kubevirt.io)
+# Resource list - we ignores vms, as they are collected in the gather_virtualmachines script
+resources=($(oc get crd -o=custom-columns=NAME:.metadata.name --no-headers | grep kubevirt.io | grep -v "virtualmachines.kubevirt.io"))
 echo ${resources[@]} | tr ' ' '\n' | xargs -t -I{} sh -c 'read_crs $1' -- {}
 
 exit 0
