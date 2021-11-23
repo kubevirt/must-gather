@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 PROS=${PROS:-5}
