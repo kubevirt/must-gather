@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 PROS=${PROS:-5}
@@ -67,6 +67,10 @@ function gather_vm_by_pod_name() {
   gather_vm_info ${ocproject} ${ocvm} ${vmname}
 }
 
+${DIR_NAME}/version
+
+${DIR_NAME}/gather_vms_namespaces
+
 if [[ -n $NS ]]; then
   BASE_COLLECTION_PATH=${BASE_COLLECTION_PATH} NS=${NS} ${DIR_NAME}/gather_vms_namespaces
 
@@ -97,5 +101,9 @@ else
   PODS=$(oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
   echo ${PODS[@]} | tr ' ' '\n' | xargs -P ${PROS} --max-args=1 -t -I{} sh -c 'gather_vm_by_pod_name $1' -- {}
 fi
+
+${DIR_NAME}/logs.sh
+
+sync
 
 exit 0

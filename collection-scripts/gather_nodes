@@ -1,8 +1,8 @@
-#!/bin/bash
-set -x
+#!/bin/bash -x
 
 BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 PROS=${PROS:-5}
+MANIFEST_PATH=${MANIFEST_PATH:-"/etc"}
 
 check_node_gather_pods_ready() {
     line=$(oc get ds node-gather-daemonset -o=custom-columns=DESIRED:.status.desiredNumberScheduled,READY:.status.numberReady --no-headers -n node-gather)
@@ -21,19 +21,22 @@ check_node_gather_pods_ready() {
 
 IFS=$'\n'
 
-NODES_PATH=${BASE_COLLECTION_PATH}/nodes
+export NODES_PATH=${BASE_COLLECTION_PATH}/nodes
 mkdir -p ${NODES_PATH}
-CRD_MANIFEST="/etc/node-gather-crd.yaml"
-DAEMONSET_MANIFEST="/etc/node-gather-ds.yaml"
-NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-POD_NAME=$(oc get pods -l app=must-gather -n "$NAMESPACE" -o'custom-columns=name:metadata.name' --no-headers)
-MUST_GATHER_IMAGE=$(oc get pod -n "$NAMESPACE" "$POD_NAME" -o jsonpath="{.spec.containers[0].image}")
 
-sed -i -e "s#MUST_GATHER_IMAGE#$MUST_GATHER_IMAGE#" $DAEMONSET_MANIFEST
+CRD_MANIFEST="${MANIFEST_PATH}/node-gather-crd.yaml"
+DAEMONSET_MANIFEST="${MANIFEST_PATH}/node-gather-ds.yaml"
 
-oc create -f $CRD_MANIFEST
+if [[ -z ${MUST_GATHER_IMAGE} ]]; then
+  NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+  POD_NAME=$(oc get pods -l app=must-gather -n "$NAMESPACE" -o'custom-columns=name:metadata.name' --no-headers)
+  MUST_GATHER_IMAGE=${MUST_GATHER_IMAGE:-$(oc get pod -n "$NAMESPACE" "$POD_NAME" -o jsonpath="{.spec.containers[0].image}")}
+fi
+
+oc apply -f ${CRD_MANIFEST}
 oc adm policy add-scc-to-user privileged -n node-gather -z node-gather
-oc create -f $DAEMONSET_MANIFEST
+
+sed -e "s#MUST_GATHER_IMAGE#$MUST_GATHER_IMAGE#" $DAEMONSET_MANIFEST | oc apply -f -
 
 COUNTER=0
 until check_node_gather_pods_ready || [ $COUNTER -eq 300 ]; do
@@ -52,12 +55,12 @@ done
 function gather_single_pod() {
     line="$1"
 
-    node=$(echo "$line" | awk -F ' ' '{print $1}')
-    pod=$(echo "$line" | awk -F ' ' '{print $2}')
+    node=$(echo "$line" | awk -F '_' '{print $1}')
+    pod=$(echo "$line" | awk -F '_' '{print $2}')
     NODE_PATH=${NODES_PATH}/$node
     mkdir -p "${NODE_PATH}"
 
-    echo "$pod - Gathering node data"
+    echo "$pod - Gathering node data for ${node}"
 
     oc exec "$pod" -n node-gather -- ip a 2>/dev/null >> "$NODE_PATH/ip.txt"
     oc exec "$pod" -n node-gather -- ip -o link show type bridge 2>/dev/null >> "$NODE_PATH/bridge"
@@ -90,21 +93,21 @@ function gather_single_pod() {
     done
     IFS=$'\n'
 
-    oc exec "$pod" -n node-gather -- ls -al /host/dev/vfio/ 2>/dev/null >> "$NODE_PATH/dev_vfio"
-    oc exec "$pod" -n node-gather -- dmesg 2>/dev/null >> "$NODE_PATH/dmesg"
-    oc exec "$pod" -n node-gather -- cat /host/proc/cmdline 2>/dev/null >> "$NODE_PATH/proc_cmdline"
-    oc exec "$pod" -n node-gather -- lspci -vv 2>/dev/null >> "$NODE_PATH/lspci"
+    oc exec "$pod" -n node-gather -- ls -al /host/dev/vfio/ 2>/dev/null >> "${NODE_PATH}/dev_vfio"
+    oc exec "$pod" -n node-gather -- dmesg 2>/dev/null >> "${NODE_PATH}/dmesg"
+    oc exec "$pod" -n node-gather -- cat /host/proc/cmdline 2>/dev/null >> "${NODE_PATH}/proc_cmdline"
+    oc exec "$pod" -n node-gather -- lspci -vv 2>/dev/null >> "${NODE_PATH}/lspci"
 
     if oc exec "$pod" -n node-gather -- [ -f /host/etc/pcidp/config.json ] 2>/dev/null; then
-        oc cp "$pod:/host/etc/pcidp/config.json" "$NODE_PATH/pcidp_config.json" -n node-gather 2>/dev/null
+        oc cp "$pod:/host/etc/pcidp/config.json" "${NODE_PATH}/pcidp_config.json" -n node-gather 2>/dev/null
     fi
     if oc exec "$pod" -n node-gather -- [ -f /host/var/log/audit/audit.log ] 2>/dev/null; then
-        oc cp "$pod:/host/var/log/audit/audit.log" "$NODE_PATH/audit.log" -n node-gather 2>/dev/null
+        oc cp "$pod:/host/var/log/audit/audit.log" "${NODE_PATH}/audit.log" -n node-gather 2>/dev/null
     fi
 }
 
 export -f gather_single_pod
-pods=$(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather)
+pods=$(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather | awk '{print $1 "_" $2}')
 echo ${pods[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_single_pod "$1"' -- {}
 
 # wait
