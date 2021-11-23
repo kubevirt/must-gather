@@ -16,7 +16,6 @@ function get_cr() {
     mkdir -p "${object_collection_path}"
     oc get "$1" -n "${ocproject}" -o yaml "${ocobject}" > "${object_collection_path}/${ocobject}.yaml"
   fi
-
 }
 
 export -f get_cr
