@@ -22,7 +22,7 @@ check_node_gather_pods_ready() {
 IFS=$'\n'
 
 export NODES_PATH=${BASE_COLLECTION_PATH}/nodes
-mkdir -p ${NODES_PATH}
+mkdir -p "${NODES_PATH}"
 
 CRD_MANIFEST="${MANIFEST_PATH}/node-gather-crd.yaml"
 DAEMONSET_MANIFEST="${MANIFEST_PATH}/node-gather-ds.yaml"
@@ -33,10 +33,10 @@ if [[ -z ${MUST_GATHER_IMAGE} ]]; then
   MUST_GATHER_IMAGE=${MUST_GATHER_IMAGE:-$(oc get pod -n "$NAMESPACE" "$POD_NAME" -o jsonpath="{.spec.containers[0].image}")}
 fi
 
-oc apply -f ${CRD_MANIFEST}
+oc apply -f "${CRD_MANIFEST}"
 oc adm policy add-scc-to-user privileged -n node-gather -z node-gather
 
-sed -e "s#MUST_GATHER_IMAGE#$MUST_GATHER_IMAGE#" $DAEMONSET_MANIFEST | oc apply -f -
+sed -e "s#MUST_GATHER_IMAGE#${MUST_GATHER_IMAGE}#" "${DAEMONSET_MANIFEST}" | oc apply -f -
 
 COUNTER=0
 until check_node_gather_pods_ready || [ $COUNTER -eq 300 ]; do
@@ -49,7 +49,7 @@ done
 
 for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName --no-headers --field-selector=status.phase!=Running -n node-gather)
 do
-    echo "Failed to collect node-gather data from node ${line} due to pod scheduling failure." >> ${NODES_PATH}/skipped_nodes.txt
+    echo "Failed to collect node-gather data from node ${line} due to pod scheduling failure." >> "${NODES_PATH}/skipped_nodes.txt"
 done
 
 function gather_single_pod() {
@@ -108,13 +108,13 @@ function gather_single_pod() {
 
 export -f gather_single_pod
 pods=$(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather | awk '{print $1 "_" $2}')
-echo ${pods[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_single_pod "$1"' -- {}
+echo "${pods[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'gather_single_pod $1' -- {}
 
 # wait
 
 # Collect journal logs for specified units for all nodes
 nodes=$(oc get nodes --no-headers -o custom-columns=':metadata.name')
-echo ${nodes[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'mkdir -p $2; oc adm node-logs "$1" -u NetworkManager > "$2/${1}_logs_NetworkManager"' -- {} ${NODES_PATH}/{}
+echo "${nodes[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'mkdir -p $2; oc adm node-logs $1 -u NetworkManager > $2/${1}_logs_NetworkManager' -- {} "${NODES_PATH}"/{}
 
-oc delete -f $DAEMONSET_MANIFEST
-oc delete -f $CRD_MANIFEST
+oc delete -f "${DAEMONSET_MANIFEST}"
+oc delete -f "${CRD_MANIFEST}"

@@ -10,7 +10,7 @@ build: docker-build docker-push
 
 # check
 check:
-	shellcheck collection-scripts/*
+	shellcheck -e SC2016 collection-scripts/*
 
 docker-build:
 	docker build -t ${IMAGE_REGISTRY}/${MUST_GATHER_IMAGE}:${IMAGE_TAG} .

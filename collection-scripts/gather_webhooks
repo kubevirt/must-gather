@@ -28,10 +28,10 @@ export -f gather_mutating_wh
 
 # we use nested loops to nicely output objects partitioned per namespace, kind
 validating_wh=$(/usr/bin/oc get validatingwebhookconfiguration -o custom-columns=NAME:.metadata.name --no-headers)
-echo ${validating_wh[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_validating_wh $1' -- {}
+echo "${validating_wh[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'gather_validating_wh $1' -- {}
 
 # we use nested loops to nicely output objects partitioned per namespace, kind
 mutating_wh=$(/usr/bin/oc get mutatingwebhookconfiguration -o custom-columns=NAME:.metadata.name --no-headers)
-echo ${mutating_wh[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'gather_mutating_wh $1' -- {}
+echo "${mutating_wh[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'gather_mutating_wh $1' -- {}
 
 exit 0
