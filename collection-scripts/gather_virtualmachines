@@ -1,33 +1,26 @@
-#!/bin/bash -x
+#!/bin/bash
 
-BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 PROS=${PROS:-5}
 
-function collect_vm() {
-  vm=$1
-  ns=$2
-  ns_path=$3
-
-  if oc get -n ${ns} vm ${vm} -o jsonpath='{ .metadata.annotations }' | grep 'vm.kubevirt.io/template'; then
-    vm_path="$ns_path/template-based"
+function write_vm_to_file() {
+  item=$(echo $1 | base64 -d)
+  ns=$(echo ${item} | jq -r '.metadata.namespace')
+  ns_path="${BASE_COLLECTION_PATH}/namespaces/${ns}/kubevirt.io/virtualmachines"
+  name=$(echo ${item} | jq -r '.metadata.name')
+  echo "Writing VM ${ns}/${name}"
+  # If there is a label that starts with "vm.kubevirt.io/template", this is a template based VM
+  if echo ${item} | jq '.metadata.labels | keys | .[] | startswith("vm.kubevirt.io/template")' | jq -s | jq -e any; then
+    dir="${ns_path}/template-based/"
   else
-    vm_path="$ns_path/custom"
+    dir="${ns_path}/custom/"
   fi
-
-  mkdir -p "${vm_path}"
-
-  /usr/bin/oc get virtualmachine "$vm" -o yaml -n "$ns" > "$vm_path/$vm.yaml"
+  mkdir -p ${dir}
+  echo ${item} | yq eval -P - > "${dir}/${name}.yaml"
 }
 
-export -f collect_vm
+export -f write_vm_to_file
 
-namespaces=($(/usr/bin/oc get virtualmachines --all-namespaces --no-headers | awk '{print $1}' | uniq))
-
-for ns in "${namespaces[@]}"; do
-  ns_path="${BASE_COLLECTION_PATH}/namespaces/${ns}/kubevirt.io/virtualmachines"
-
-  vms=$(/usr/bin/oc get virtualmachine -n "${ns}" --no-headers -o custom-columns=NAME:.metadata.name)
-  echo ${vms[@]} | tr ' ' '\n' | xargs -t -P ${PROS} --max-args=1 -I{} sh -c 'collect_vm $1 $2 $3' -- {} "${ns}" "${ns_path}"
-done
+/usr/bin/oc get virtualmachine -A -o json | jq -r '.items[] | @base64' | xargs -P ${PROS} --max-args=1 -I{} sh -c 'write_vm_to_file  $1' -- {}
 
 exit 0

@@ -326,7 +326,12 @@ func getDataDir() (string, error) {
 		return "", err
 	}
 
-	outputDir := path.Join(wd, "must-gather-output")
+	mgOutputDir, found := os.LookupEnv("MG_OUTPUT_DIR")
+	if !found {
+		mgOutputDir = "must-gather-output"
+	}
+
+	outputDir := path.Join(wd, mgOutputDir)
 
 	files, err := os.ReadDir(outputDir)
 	if err != nil {
