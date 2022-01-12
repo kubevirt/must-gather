@@ -10,8 +10,8 @@ IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources/images
 export NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
 
 function gather_imagestream() {
-  namespace=$(echo $1 | awk -F_ '{print $1}')
-  name=$(echo $1 | awk -F_ '{print $2}')
+  namespace=$(echo "$1" | awk -F_ '{print $1}')
+  name=$(echo "$1" | awk -F_ '{print $2}')
 
   echo "Gathering imagestream ${namespace}/${name}"
   mkdir -p "${NAMESPACE_PATH}/${namespace}/imagestreams"
@@ -19,8 +19,8 @@ function gather_imagestream() {
 }
 
 function gather_imagestreamtag() {
-  namespace=$(echo $1 | awk -F_ '{print $1}')
-  name=$(echo $1 | awk -F_ '{print $2}')
+  namespace=$(echo "$1" | awk -F_ '{print $1}')
+  name=$(echo "$1" | awk -F_ '{print $2}')
 
   echo "Gathering imagestreamtags ${namespace}/${name}"
   mkdir -p "${NAMESPACE_PATH}/${namespace}/imagestreamtags"
@@ -30,21 +30,21 @@ function gather_imagestreamtag() {
 export -f gather_imagestream
 export -f gather_imagestreamtag
 
-${DIR_NAME}/version
+"${DIR_NAME}"/version
 
 echo "gather images"
-mkdir -p ${IMAGES_PATH}
+mkdir -p "${IMAGES_PATH}"
 images=$(oc get image -o=custom-columns=NAME:.metadata.name --no-headers)
-echo ${images[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'oc get image $1 -o yaml > $2' -- {} "${IMAGES_PATH}/{}.yaml"
+echo "${images[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'oc get image $1 -o yaml > $2' -- {} "${IMAGES_PATH}/{}.yaml"
 
 echo "gather imagestreams"
 imagestreams=$(oc get imagestreams --no-headers --all-namespaces | awk '{print $1 "_" $2}')
-echo ${imagestreams[@]} | tr ' ' '\n' | xargs -t -i{} -P ${PROS} --max-args=1 sh -c 'gather_imagestream "$1"' -- {}
+echo "${imagestreams[@]}" | tr ' ' '\n' | xargs -t -i{} -P "${PROS}" --max-args=1 sh -c 'gather_imagestream $1' -- {}
 
 echo "gather imagestreamtags"
 imagestreamtags=$(oc get imagestreamtags --no-headers --all-namespaces | awk '{print $1 "_" $2}')
-echo ${imagestreamtags[@]} | tr ' ' '\n' | xargs -t -i{} -P ${PROS} --max-args=1 sh -c 'gather_imagestreamtag "$1"' -- {}
+echo "${imagestreamtags[@]}" | tr ' ' '\n' | xargs -t -i{} -P "${PROS}" --max-args=1 sh -c 'gather_imagestreamtag $1' -- {}
 
-${DIR_NAME}/logs.sh
+"${DIR_NAME}"/logs.sh
 
 sync

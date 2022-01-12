@@ -21,7 +21,7 @@ function version() {
 
 if [[ ! -f ${VERSION_FILE} ]]; then
   # generate /must-gather/version file
-  mkdir -p ${BASE_COLLECTION_PATH}
-  echo "kubevirt/must-gather" > ${VERSION_FILE}
-  version >> ${VERSION_FILE}
+  mkdir -p "${BASE_COLLECTION_PATH}"
+  echo "kubevirt/must-gather" > "${VERSION_FILE}"
+  version >> "${VERSION_FILE}"
 fi

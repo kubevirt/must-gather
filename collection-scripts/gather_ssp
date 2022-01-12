@@ -5,6 +5,6 @@ PROS=${PROS:-5}
 
 # we expect the KubeVirt templates to be deployed only in the `opneshift` namespace. But if this turns out not to be true, we need to know.
 namespaces=$(/usr/bin/oc get templates --all-namespaces -l 'template.kubevirt.io/type=base' -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' | uniq)
-echo ${namespaces[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 command sh -c 'mkdir -p $2; /usr/bin/oc get templates -n $1 -o yaml > $2/$1.yaml' -- {} ${BASE_COLLECTION_PATH}/namespaces/{}/templates
+echo "${namespaces[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 command sh -c 'mkdir -p $2; /usr/bin/oc get templates -n $1 -o yaml > $2/$1.yaml' -- {} "${BASE_COLLECTION_PATH}"/namespaces/{}/templates
 
 exit 0

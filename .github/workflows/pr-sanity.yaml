@@ -1,0 +1,19 @@
+name: Sanity Test
+
+on:
+  pull_request:
+    branches:
+    - main
+    - release-*
+jobs:
+  build_push:
+    if: (github.repository == 'kubevirt/must-gather')
+    name: Pull Request Sanity
+    runs-on: ubuntu-latest
+    steps:
+    - name: ShellCheck
+      uses: actions/checkout@v2
+      with:
+        ref: ${{ github.ref }}
+    - name: Check scripts
+      run: shellcheck -e SC2016 collection-scripts/*

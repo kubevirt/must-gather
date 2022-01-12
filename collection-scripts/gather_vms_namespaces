@@ -10,6 +10,6 @@ else
 fi
 
 # Run the collection of namespaces using must-gather
-echo ${namespaces[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'echo "inspecting namespace $1" && /usr/bin/oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} namespace $1' -- {}
+echo "${namespaces[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'echo "inspecting namespace $1" && /usr/bin/oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} namespace $1' -- {}
 
 exit 0
