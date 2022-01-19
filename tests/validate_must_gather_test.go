@@ -172,6 +172,7 @@ var _ = Describe("validate the must-gather output", func() {
 				"dmesg",
 				"ip.txt",
 				"lspci",
+				"nftables",
 				"opt-cni-bin",
 				"proc_cmdline",
 				"sys_sriov_numvfs",

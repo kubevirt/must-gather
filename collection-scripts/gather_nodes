@@ -66,12 +66,7 @@ function gather_single_pod() {
     oc exec "$pod" -n node-gather -- ip -o link show type bridge 2>/dev/null >> "$NODE_PATH/bridge"
     oc exec "$pod" -n node-gather -- bridge -j vlan show 2>/dev/null >> "$NODE_PATH/vlan"
 
-    for i in $(oc exec "$pod" -n node-gather -- nft list tables 2>/dev/null);
-    do
-        family=$(echo "$i" | awk -F ' ' '{print $2}' | sed 's/\r//')
-        table=$(echo "$i" | awk -F ' ' '{print $3}' | sed 's/\r//')
-        oc exec "$pod" -n node-gather -- nft list table "$family" "$table" 2>/dev/null > "$NODE_PATH/nft-${family}-${table}"
-    done
+    oc exec "$pod" -n node-gather -- nft list ruleset 2>/dev/null > "$NODE_PATH/nftables"
 
     # shellcheck disable=SC2016
     oc exec "$pod" -n node-gather -- /bin/bash -c 'for dev in /host/sys/bus/pci/devices/*; do if [[ -e $dev/sriov_numvfs ]]; then echo "sriov_numvfs on dev ${dev##*/}: $(cat $dev/sriov_numvfs)"; fi; done' >> "$NODE_PATH/sys_sriov_numvfs"
