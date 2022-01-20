@@ -1,26 +1,7 @@
-#!/bin/bash
+#!/bin/bash -x
 
 export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
-PROS=${PROS:-5}
 
-function write_vm_to_file() {
-  item=$(echo "$1" | base64 -d)
-  ns=$(echo "${item}" | jq -r '.metadata.namespace')
-  ns_path="${BASE_COLLECTION_PATH}/namespaces/${ns}/kubevirt.io/virtualmachines"
-  name=$(echo "${item}" | jq -r '.metadata.name')
-  echo "Writing VM ${ns}/${name}"
-  # If there is a label that starts with "vm.kubevirt.io/template", this is a template based VM
-  if echo "${item}" | jq '.metadata.labels | keys | .[] | startswith("vm.kubevirt.io/template")' | jq -s | jq -e any; then
-    dir="${ns_path}/template-based/"
-  else
-    dir="${ns_path}/custom/"
-  fi
-  mkdir -p "${dir}"
-  echo "${item}" | yq eval -P - > "${dir}/${name}.yaml"
-}
-
-export -f write_vm_to_file
-
-/usr/bin/oc get virtualmachine -A -o json | jq -r '.items[] | @base64' | xargs -P "${PROS}" --max-args=1 -I{} sh -c 'write_vm_to_file  $1' -- {}
+vmConvertor
 
 exit 0
