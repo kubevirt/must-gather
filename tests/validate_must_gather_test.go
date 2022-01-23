@@ -172,12 +172,6 @@ var _ = Describe("validate the must-gather output", func() {
 				"dmesg",
 				"ip.txt",
 				"lspci",
-				"nft-ip-filter",
-				"nft-ip-mangle",
-				"nft-ip-nat",
-				"nft-ip6-filter",
-				"nft-ip6-mangle",
-				"nft-ip6-nat",
 				"opt-cni-bin",
 				"proc_cmdline",
 				"sys_sriov_numvfs",
@@ -189,15 +183,23 @@ var _ = Describe("validate the must-gather output", func() {
 			nodesDir := path.Join(outputDir, "nodes")
 			nodes, err := os.ReadDir(nodesDir)
 			Expect(err).ToNot(HaveOccurred())
+			missingExpectedFile := false
 			for _, node := range nodes {
+				if strings.Contains(node.Name(), "master") {
+					continue
+				}
 				Expect(node.IsDir()).To(BeTrue(), node.Name(), " should be a directory")
 				nodeDir := path.Join(nodesDir, node.Name())
 				nodeFiles, err := os.ReadDir(nodeDir)
 				Expect(err).ToNot(HaveOccurred())
 				for _, expectedResource := range expectedResources {
-					Expect(fileInDir(nodeFiles, expectedResource))
+					if !fileInDir(nodeFiles, expectedResource) {
+						logger.Printf("node %s info should include the %s file, but it doesn't", node.Name(), expectedResource)
+						missingExpectedFile = true
+					}
 				}
 			}
+			Expect(missingExpectedFile).To(BeFalse(), "missing expected files")
 
 		})
 
