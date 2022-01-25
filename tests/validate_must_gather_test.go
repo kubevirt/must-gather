@@ -246,11 +246,11 @@ var _ = Describe("validate the must-gather output", func() {
 			Expect(dir).To(HaveLen(5))
 
 			fileExists := map[string]bool{
-				"bridge.txt":   false,
-				"dumpxml.xml":  false,
-				"iptables.txt": false,
-				"ip.txt":       false,
-				"qemu.log":     false,
+				"bridge.txt":     false,
+				"dumpxml.xml":    false,
+				"ruletables.txt": false,
+				"ip.txt":         false,
+				"qemu.log":       false,
 			}
 
 			dotLoc := strings.Index(dir[0].Name(), ".")

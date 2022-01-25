@@ -3,6 +3,7 @@
 export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 export PROS="${PROS:-5}"
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+INSTALLATION_NAMESPACE="${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}"
 
 function gather_vm_info() {
   ocproject=$1
@@ -44,18 +45,10 @@ function gather_vm_info() {
     /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- bridge vlan show 2>/dev/null
   } > "${vm_collection_path}/${ocvm}.bridge.txt"
 
-  # VM : iptables
+  # VM : nftables / iptables
   {
-    echo "###################################"
-    echo "Filter table:"
-    echo "###################################"
-    /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- iptables -t filter -L 2>/dev/null
-
-    echo -e "\n\n###################################"
-    echo "NAT table:"
-    echo "###################################"
-    /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- iptables -t nat -L 2>/dev/null
-  } > "${vm_collection_path}/${ocvm}.iptables.txt"
+    get_vm_rule_tables "${ocproject}" "${vmname}"
+  } > "${vm_collection_path}/${ocvm}.ruletables.txt"
 }
 
 function gather_vm_by_pod_name() {
@@ -73,8 +66,36 @@ function gather_vm_by_pod_name() {
   gather_vm_info "${ocproject}" "${ocvm}" "${vmname}"
 }
 
+function get_vm_rule_tables() {
+  ocproject=$1
+  vmname=$2
+
+  vminfo=$(/usr/bin/oc get vmi -n "${ocproject}" "${vmname}" -o=custom-columns=UID:.metadata.uid,NODE:.status.nodeName --no-headers)
+  vmuid=$(echo "${vminfo}" | tr -s ' ' | cut -d ' ' -f 1)
+  vmnode=$(echo "${vminfo}" | tr -s ' ' | cut -d ' ' -f 2)
+
+  handler=$(/usr/bin/oc get pods -A -l kubevirt.io=virt-handler -o=custom-columns=NAME:.metadata.name --field-selector spec.nodeName="${vmnode}" --no-headers)
+
+  pid=$(/usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "pgrep -f \"uid ${vmuid}.*no-fork\"")
+
+  if /usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "nft -v" > /dev/null 2>&1; then
+    /usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "nsenter -t ${pid} -n -- nft list ruleset" 2>/dev/null
+  else
+    echo "###################################"
+    echo "Filter table:"
+    echo "###################################"
+    /usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "nsenter -t ${pid} -n -- iptables -t filter -L" 2>/dev/null
+
+    echo -e "\n\n###################################"
+    echo "NAT table:"
+    echo "###################################"
+    /usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "nsenter -t ${pid} -n -- iptables -t nat -L" 2>/dev/null
+  fi
+}
+
 export -f gather_vm_by_pod_name
 export -f gather_vm_info
+export -f get_vm_rule_tables
 
 "${DIR_NAME}"/version
 
