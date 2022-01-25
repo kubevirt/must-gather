@@ -12,9 +12,8 @@ function gather_vm_info() {
   vm_collection_path=${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms/${vmname}
   mkdir -p "${vm_collection_path}"
 
-  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject pod $ocvm
-  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject virtualmachines $vmname
-  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n $ocproject virtualmachineinstances $vmname
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" pod "$ocvm"
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" virtualmachineinstances "${vmname}"
 
   # VM : dumpxml
   /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh dumpxml "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.dumpxml.xml"
@@ -68,6 +67,8 @@ function gather_vm_by_pod_name() {
 }
 
 ${DIR_NAME}/version
+
+"${DIR_NAME}"/vmConvertor
 
 ${DIR_NAME}/gather_vms_namespaces
 
