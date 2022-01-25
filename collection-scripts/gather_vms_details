@@ -14,7 +14,6 @@ function gather_vm_info() {
   mkdir -p "${vm_collection_path}"
 
   /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" pod "$ocvm"
-  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" virtualmachines "${vmname}"
   /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" virtualmachineinstances "${vmname}"
 
   # VM : dumpxml
@@ -99,7 +98,7 @@ export -f get_vm_rule_tables
 
 "${DIR_NAME}"/version
 
-"${DIR_NAME}"/gather_virtualmachines
+"${DIR_NAME}"/vmConvertor
 
 "${DIR_NAME}"/gather_vms_namespaces
 
