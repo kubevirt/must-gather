@@ -22,47 +22,47 @@ resources+=(istag)
 resources+=(nodes)
 resources+=(machines)
 
-${DIR_NAME}/version
+"${DIR_NAME}"/version
 
 # Run the collection of resources using must-gather
-echo ${resources[@]} | tr ' ' '\n' | xargs -t -I{} -P ${PROS} --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
+echo "${resources[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
 
-${DIR_NAME}/gather_virtualmachines
+"${DIR_NAME}"/vmConvertor
 
 # Collect relevant namespaces data
-${DIR_NAME}/gather_ns
+"${DIR_NAME}"/gather_ns
 
 # Collect HCO details (first, because it's there before anything else)
-${DIR_NAME}/gather_hco
+"${DIR_NAME}"/gather_hco
 
 # Collect HCO details (first, because it's there before anything else)
-${DIR_NAME}/gather_hco
+"${DIR_NAME}"/gather_hco
 
 # Collect the CRDs
-${DIR_NAME}/gather_crds
+"${DIR_NAME}"/gather_crds
 
 # Collect the CRs explicitely - some of them, like VMs, are collected by steps below
-${DIR_NAME}/gather_crs
+"${DIR_NAME}"/gather_crs
 
 # Collect the apiservices
-${DIR_NAME}/gather_apiservices
+"${DIR_NAME}"/gather_apiservices
 
 # Collect SSP details
-${DIR_NAME}/gather_ssp
+"${DIR_NAME}"/gather_ssp
 
 # Collect nodes details
-${DIR_NAME}/gather_nodes
+"${DIR_NAME}"/gather_nodes
 
 # Collect CDI details
-${DIR_NAME}/gather_cdi
+"${DIR_NAME}"/gather_cdi
 
 # Collect the webhooks
-${DIR_NAME}/gather_webhooks
+"${DIR_NAME}"/gather_webhooks
 
 # Collect v2v details
-${DIR_NAME}/gather_v2v
+"${DIR_NAME}"/gather_v2v
 
-${DIR_NAME}/logs.sh
+"${DIR_NAME}"/logs.sh
 
 sync
 
