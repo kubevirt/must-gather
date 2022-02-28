@@ -106,7 +106,8 @@ if [[ -n $NS ]]; then
   if [[ -n "${VM}" ]]; then
     mapfile -t VMS < <(echo "${VM}" | tr ',' ' ')
     mapfile -t PODS < <(oc get pod -n "${NS}" --no-headers -o 'custom-columns=name:metadata.name')
-    for vm in "${VMS[@]}"; do
+    # shellcheck disable=SC2068
+    for vm in ${VMS[@]}; do
       POD=$(echo "${PODS[@]}" | tr ' ' '\n' | grep -E "virt-launcher-${vm}-[^-]+$")
       gather_vm_info "${NS}" "${POD}" "${vm}"
     done
