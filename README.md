@@ -72,7 +72,7 @@ The `VM` environment variable can also be a comma-seperated list of VM names (wi
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- NS=ns1 \
-   VM="testvm1,testvm34,testvm52,testvm74", \
+   VM="testvm1,testvm34,testvm52,testvm74" \
    /usr/bin/gather_vms_details
 ```
 #### Gather VM by Regex Expression
@@ -98,7 +98,7 @@ Here is how to use it in the `gather_vms_details` command, to search VMs by rege
 ```sh
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
-   VM_EXP="^testvm[2-4]-[0-9]*[1,3,5,7,9]$", \
+   VM_EXP="^testvm[2-4]-[0-9]*[1,3,5,7,9]$" \
    /usr/bin/gather_vms_details
 ```
 
@@ -107,7 +107,7 @@ Here is how to use it in the `gather_vms_details` command, to search VMs by rege
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- NS=ns1 \
-   VM_EXP="^testvm[2-4]-[0-9]*[1,3,5,7,9]$", \
+   VM_EXP="^testvm[2-4]-[0-9]*[1,3,5,7,9]$" \
    /usr/bin/gather_vms_details
 ```
 
