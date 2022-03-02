@@ -52,7 +52,7 @@ spec:
     channel: "${HCO_VERSION}"
 EOF
 
-sleep 60
+sleep 120
 
 # Wait for the deployments to be available
 "${CMD}" wait -n "${NS}" deployment hco-operator --for=condition=Available --timeout="1080s"
