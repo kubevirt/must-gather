@@ -54,7 +54,7 @@ function gather_vm_by_pod_name() {
   pod=$1
   ocproject=$(echo "$pod" | awk -F_ '{print $1}')
   ocvm=$(echo "$pod" | awk -F_ '{print $2}')
-  vmname=$(echo "${ocvm}" 2>/dev/null | cut -d'-' -f3- | sed "s/-[^-]*$//")
+  vmname=$(echo "$pod" | awk -F_ '{print $3}')
 
   if [[ -n ${VM_EXP} ]]; then
     if [[ ! "${vmname}" =~ ${VM_EXP} ]]; then
@@ -113,7 +113,7 @@ if [[ -n $NS ]]; then
     done
 
   else
-    mapfile -t PODS < <(/usr/bin/oc get pod -n "$NS" -l kubevirt.io=virt-launcher --no-headers -o custom-columns=NAME:.metadata.name)
+    mapfile -t PODS < <(/usr/bin/oc get pod -n "$NS" -l kubevirt.io=virt-launcher --no-headers -o custom-columns="NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" | awk '{print $1 "_" $2}')
     echo "${PODS[@]}" | tr ' ' '\n' | xargs -t -P "${PROS}" --max-args=1 -I{} sh -c 'gather_vm_by_pod_name $1' -- "${NS}"_{}
   fi
 
@@ -123,7 +123,7 @@ else
     exit 1
   fi
 
-  mapfile -t PODS < <(oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers | awk '{print $1 "_" $2}')
+  mapfile -t PODS < <(oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" | awk '{print $1 "_" $2 "_" $3}')
   echo "${PODS[@]}" | tr ' ' '\n' | xargs -P "${PROS}" --max-args=1 -t -I{} sh -c 'gather_vm_by_pod_name $1' -- {}
 
 fi
