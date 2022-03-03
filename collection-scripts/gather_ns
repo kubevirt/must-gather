@@ -2,17 +2,13 @@
 
 export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 PROS=${PROS:-5}
-INSTALLATION_NAMESPACE=${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}
 
 namespaces=()
 # KubeVirt HCO related namespaces
 namespaces+=("${INSTALLATION_NAMESPACE}" openshift-operator-lifecycle-manager openshift-marketplace)
 
 # KubeVirt network related namespaces
-namespaces+=(cluster-network-addons openshift-sdn openshift-sriov-network-operator)
-
-# KubeVirt Web UI namespaces
-namespaces+=(kubevirt-web-ui)
+namespaces+=(openshift-sdn)
 
 # CDI
 resources+=(cdi)
