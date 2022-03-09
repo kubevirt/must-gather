@@ -100,6 +100,8 @@ export -f get_vm_rule_tables
 
 "${DIR_NAME}"/vmConvertor
 
+"${DIR_NAME}"/gather_ns
+
 "${DIR_NAME}"/gather_vms_namespaces
 
 if [[ -n $NS ]]; then
