@@ -5,7 +5,7 @@ RUN (cd vmConvertor && go build -ldflags="-s -w" .)
 
 FROM quay.io/openshift/origin-must-gather:4.9.0 as builder
 
-FROM quay.io/centos/centos:8
+FROM quay.io/centos/centos:stream8
 
 ENV INSTALLATION_NAMESPACE kubevirt-hyperconverged
 
