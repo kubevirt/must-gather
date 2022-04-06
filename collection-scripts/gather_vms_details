@@ -107,11 +107,15 @@ export -f get_vm_rule_tables
 if [[ -n $NS ]]; then
   if [[ -n "${VM}" ]]; then
     mapfile -t VMS < <(echo "${VM}" | tr ',' ' ')
-    mapfile -t PODS < <(oc get pod -n "${NS}" --no-headers -o 'custom-columns=name:metadata.name')
+    mapfile -t PODS < <(oc get pod -n "${NS}" -l 'kubevirt.io=virt-launcher' -o 'custom-columns=name:.metadata.name,vmname:metadata.annotations.kubevirt\.io/domain' --no-headers | awk '{print $1 "_" $2}')
     # shellcheck disable=SC2068
     for vm in ${VMS[@]}; do
-      POD=$(echo "${PODS[@]}" | tr ' ' '\n' | grep -E "virt-launcher-${vm}-[^-]+$")
-      gather_vm_info "${NS}" "${POD}" "${vm}"
+      POD=$(echo "${PODS[@]}" | tr ' ' '\n' | grep "_${vm}" | awk -F_ '{print $1}')
+      if [[ -n ${POD} ]]; then
+        gather_vm_info "${NS}" "${POD}" "${vm}"
+      else
+        echo "Can't find pod for VM ${vm}"
+      fi
     done
 
   else
