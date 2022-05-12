@@ -4,6 +4,8 @@ export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 export PROS="${PROS:-5}"
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 INSTALLATION_NAMESPACE="${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}"
+export QEMULOGPATH_1="/var/log/libvirt/qemu/"
+export QEMULOGPATH_2="/var/run/libvirt/qemu/log/"
 
 function gather_vm_info() {
   ocproject=$1
@@ -21,7 +23,7 @@ function gather_vm_info() {
 
   # VM : QEMU logs
   # libvirt logs are already relayed to virt-launcher, and we capture the virt-launcher pod logs elsewhere. We are want the QEMU log here.
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- cat "/var/log/libvirt/qemu/${ocproject}_${vmname}.log" > "${vm_collection_path}/${ocvm}.qemu.log"
+  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- tar --ignore-failed-read -cf - "${QEMULOGPATH_1}" "${QEMULOGPATH_2}" | tar -C "${vm_collection_path}" --transform 's/.*\///g' -xvf -
 
   # VM : IP
   /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- ip a 2>/dev/null > "${vm_collection_path}/${ocvm}.ip.txt"
@@ -75,7 +77,7 @@ function get_vm_rule_tables() {
 
   handler=$(/usr/bin/oc get pods -A -l kubevirt.io=virt-handler -o=custom-columns=NAME:.metadata.name --field-selector spec.nodeName="${vmnode}" --no-headers)
 
-  pid=$(/usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "pgrep -f \"uid ${vmuid}.*no-fork\"")
+  pid=$(/usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "pgrep -f 'virt-launcher .*${vmuid}'")
 
   if /usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "nft -v" > /dev/null 2>&1; then
     /usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "nsenter -t ${pid} -n -- nft list ruleset" 2>/dev/null

@@ -241,24 +241,51 @@ var _ = Describe("validate the must-gather output", func() {
 			vmDir := path.Join(outputDir, "namespaces", namespace, "vms", expectedName)
 			dir, err := os.ReadDir(vmDir)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(dir).To(HaveLen(5))
 
-			fileExists := map[string]bool{
+			fileExistsNotEmpty := map[string]bool{
 				"bridge.txt":     false,
 				"dumpxml.xml":    false,
 				"ruletables.txt": false,
 				"ip.txt":         false,
-				"qemu.log":       false,
 			}
 
-			dotLoc := strings.Index(dir[0].Name(), ".")
-			podName := dir[0].Name()[:dotLoc]
+			dotLoc := 0
+			podName := ""
+			for _, f := range dir {
+				if strings.HasPrefix(f.Name(), "virt-launcher-testvm") {
+					dotLoc = strings.Index(f.Name(), ".")
+					podName = f.Name()[:dotLoc]
+					break
+				}
+			}
+			Expect(dotLoc).To(BeNumerically(">", 0))
+			Expect(podName).ToNot(Equal(""))
 
 			for _, f := range dir {
-				fileExists[f.Name()[dotLoc+1:]] = true
+				if strings.HasPrefix(f.Name(), podName) {
+					fi, err := f.Info()
+					Expect(err).ToNot(HaveOccurred())
+					if fi.Size() > 0 {
+						fileExistsNotEmpty[f.Name()[dotLoc+1:]] = true
+					}
+				}
 			}
 
-			Expect(fileExists).To(BeAllTrueInBoolMap())
+			Expect(fileExistsNotEmpty).To(BeAllTrueInBoolMap())
+
+			expectedQemuLogName := fmt.Sprintf("%s_testvm-%s-vm001.log", namespace, namespace)
+			foundLogFile := false
+			for _, f := range dir {
+				if f.Name() == expectedQemuLogName {
+					foundLogFile = true
+					break
+				}
+			}
+			Expect(foundLogFile).To(BeTrue())
+
+			logFile, err := os.Stat(path.Join(vmDir, expectedQemuLogName))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(logFile.Size()).ToNot(BeZero())
 
 			podFile, err := os.Open(path.Join(outputDir, "namespaces", namespace, "pods", podName, podName+".yaml"))
 			Expect(err).ToNot(HaveOccurred())
