@@ -2,6 +2,7 @@
 
 export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 PROS=${PROS:-5}
+INSTALLATION_NAMESPACE=${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}
 
 namespaces=()
 # KubeVirt HCO related namespaces
