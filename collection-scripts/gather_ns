@@ -9,10 +9,7 @@ namespaces=()
 namespaces+=("${INSTALLATION_NAMESPACE}" openshift-operator-lifecycle-manager openshift-marketplace)
 
 # KubeVirt network related namespaces
-namespaces+=(cluster-network-addons openshift-sdn sriov-network-operator)
-
-# KubeVirt Web UI namespaces
-namespaces+=(kubevirt-web-ui)
+namespaces+=(openshift-sdn)
 
 # CDI
 resources+=(cdi)
