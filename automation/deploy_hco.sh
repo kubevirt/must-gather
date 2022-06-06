@@ -2,7 +2,8 @@
 
 set -ex
 
-HCO_VERSION=1.6.0
+HCO_VERSION=1.7.0
+UNSTABLE="-unstable"
 MINOR_VER="${HCO_VERSION%.*}"
 CMD=oc
 NS=kubevirt-hyperconverged
@@ -16,7 +17,7 @@ metadata:
   namespace: openshift-marketplace
 spec:
   sourceType: grpc
-  image: "quay.io/kubevirt/hyperconverged-cluster-index:${HCO_VERSION}"
+  image: "quay.io/kubevirt/hyperconverged-cluster-index:${HCO_VERSION}${UNSTABLE}"
   displayName: Kubevirt Hyperconverged Cluster Operator
   publisher: Kubevirt Project
 EOF
