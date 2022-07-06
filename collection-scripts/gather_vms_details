@@ -6,6 +6,7 @@ DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 INSTALLATION_NAMESPACE="${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}"
 export QEMULOGPATH_1="/var/log/libvirt/qemu/"
 export QEMULOGPATH_2="/var/run/libvirt/qemu/log/"
+export QEMULOGPATH_3="/var/run/kubevirt-private/libvirt/qemu/log/"
 
 function gather_vm_info() {
   ocproject=$1
@@ -23,7 +24,7 @@ function gather_vm_info() {
 
   # VM : QEMU logs
   # libvirt logs are already relayed to virt-launcher, and we capture the virt-launcher pod logs elsewhere. We are want the QEMU log here.
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- tar --ignore-failed-read -cf - "${QEMULOGPATH_1}" "${QEMULOGPATH_2}" | tar -C "${vm_collection_path}" --transform 's/.*\///g' -xvf -
+  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- tar --ignore-failed-read -cf - "${QEMULOGPATH_1}" "${QEMULOGPATH_2}" "${QEMULOGPATH_3}" | tar -C "${vm_collection_path}" --transform 's/.*\///g' -xvf -
 
   # VM : IP
   /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- ip a 2>/dev/null > "${vm_collection_path}/${ocvm}.ip.txt"
