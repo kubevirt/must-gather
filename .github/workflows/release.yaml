@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  validate_tag:
+    name: Validate Tag
+    runs-on: ubuntu-latest
+    steps:
+    - name: Validate tag matches SemVer
+      uses: rubenesp87/semver-validation-action@0.0.6
+      with:
+        version: ${{ github.ref_name }}
+
+  create_github_release:
+    name: Create GitHub Release
+    needs: validate_tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main code
+        uses: actions/checkout@v2
+        with:
+          ref: main
+
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          cd scripts/release-notes/
+          VERSION=${{ github.ref_name }} GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} make run
+          output="$(cat out.txt)"
+          output="${output//'%'/'%25'}"
+          output="${output//$'\n'/'%0A'}"
+          output="${output//$'\r'/'%0D'}"
+          echo "::set-output name=text::$output"
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          body: ${{ steps.release_notes.outputs.text }}
+          draft: false
+          prerelease: false
+
+  push_image_quay:
+    name: Push Image to Quay
+    needs: validate_tag
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_NAMESPACE: kubevirt
+    steps:
+      - name: Checkout tag code
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Build Image
+        id: build_image
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: must-gather
+          tags: ${{ github.ref_name }}
+          containerfiles: |
+            ./Dockerfile
+
+      - name: Log in to registry
+        uses: redhat-actions/podman-login@v1
+        with:
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+          registry: quay.io
+
+      - name: Push Image
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build_image.outputs.image }}
+          tags: ${{ steps.build_image.outputs.tags }}
+          registry: quay.io/${{ env.REGISTRY_NAMESPACE }}

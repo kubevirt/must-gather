@@ -4,9 +4,9 @@ GINKGO_JUNIT_REPORT ?= report.xml
 
 # MUST_GATHER_IMAGE needs to be passed explicitly to avoid accidentally pushing to kubevirt/must-gather
 check-image-env:
-	ifndef MUST_GATHER_IMAGE
+ifndef MUST_GATHER_IMAGE
 	$(error MUST_GATHER_IMAGE is not set.)
-	endif
+endif
 
 build: check-image-env docker-build docker-push
 
