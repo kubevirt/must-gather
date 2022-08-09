@@ -137,8 +137,6 @@ else
 
 fi
 
-"${DIR_NAME}"/logs.sh
-
 sync
 
 exit 0

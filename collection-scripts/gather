@@ -1,0 +1,172 @@
+#!/bin/bash
+
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+export PROS=${PROS:-5}
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+function main() {
+  declare no_flags="true"
+  declare -A requested_scripts=()
+  declare default_params=(
+    "--apiservices"
+    "--cdi"
+    "--crds"
+    "--crs"
+    "--hco"
+    "--nodes"
+    "--ns"
+    "--resources"
+    "--ssp"
+    "--virtualmachines"
+    "--webhooks"
+  )
+
+  parse_flags "$@"
+  run_scripts
+  run_logs
+
+  sync
+  exit 0
+}
+
+function parse_flags {
+  while :; do
+    case $1 in
+      --help)
+        help
+        exit 0
+        ;;
+      --default)
+        no_flags="false"
+        set_default_as_requested
+        ;;
+      --apiservices)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --cdi)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --crds)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --crs)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --hco)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --images)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --nodes)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --ns)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --resources)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --ssp)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --virtualmachines)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --vms_details)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --vms_namespaces)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --webhooks)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -?*)
+        printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+        ;;
+      *) # Default case: No more options, so break out of the loop.
+        break
+    esac
+    shift
+  done
+}
+
+function help {
+    echo "\
+Usage: $(basename "${BASH_SOURCE[0]}") [params...]
+
+  A client tool for gathering KubeVirt information in an OpenShift cluster
+
+  Available options:
+
+  > To see this help menu and exit use
+  --help
+
+  > To collect all default information (this is automatically selected if no
+  > parameter is used)
+  --default
+
+  > You can also select which information must-gather will collect by using one
+  > or more of the following parameters. If no parameter is selected the script
+  > will collect a default set of resources
+  --apiservices     (default)
+  --cdi             (default)
+  --crds            (default)
+  --crs             (default)
+  --hco             (default)
+  --nodes           (default)
+  --ns              (default)
+  --resources       (default)
+  --ssp             (default)
+  --virtualmachines (default)
+  --webhooks        (default)
+  --images
+  --vms_details
+  --vms_namespaces
+"
+}
+
+function set_default_as_requested {
+  for default_param in "${default_params[@]}";
+  do
+    requested_scripts[$default_param]="true"
+  done
+}
+
+function run_scripts {
+  if [ "$no_flags" == "true" ]; then
+    set_default_as_requested
+  fi
+
+  for script in "${!requested_scripts[@]}";
+  do
+    echo "running gather_${script:2}"
+    eval "${DIR_NAME}/gather_${script:2}"
+  done
+}
+
+function run_logs {
+  echo "running logs"
+  "${DIR_NAME}"/logs.sh
+}
+
+main "$@"; exit
