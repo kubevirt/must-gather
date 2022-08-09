@@ -7,7 +7,7 @@ DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # Collect resources information
 "${DIR_NAME}"/gather_resources
 
-"${DIR_NAME}"/vmConvertor
+"${DIR_NAME}"/gather_virtualmachines
 
 # Collect relevant namespaces data
 "${DIR_NAME}"/gather_ns
