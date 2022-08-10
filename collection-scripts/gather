@@ -112,7 +112,7 @@ function parse_flags {
 
 function help {
     echo "\
-Usage: $(basename "${BASH_SOURCE[0]}") [params...]
+Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather [params...]
 
   A client tool for gathering KubeVirt information in an OpenShift cluster
 
@@ -122,12 +122,11 @@ Usage: $(basename "${BASH_SOURCE[0]}") [params...]
   --help
 
   > To collect all default information (this is automatically selected if no
-  > parameter is used)
+  > parameter is set) use
   --default
 
   > You can also select which information must-gather will collect by using one
-  > or more of the following parameters. If no parameter is selected the script
-  > will collect a default set of resources
+  > or more of the following parameters
   --apiservices     (default)
   --cdi             (default)
   --crds            (default)

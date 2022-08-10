@@ -21,6 +21,68 @@ By default, the VMs definitions won't be included, but only the VM Instances' cu
 In order to get data about other parts of the cluster (not specific to KubeVirt) you should
 run `oc adm must-gather` (without passing a custom image). Run `oc adm must-gather -h` to see more options.
 
+### Flags
+
+`must-gather` provides a series of options to select which information to
+collect from the cluster. If no flag is provided the tool will collect a default
+set of information, marked with "`(default)`" in the help menu, as shown in the
+next section. You can also use the `--default` or any other listed flags to fine
+tune the information to collect.
+
+To run the default collectors:
+```sh
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather
+# or
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather --default
+```
+
+To collect Virtual Machines and VMs details:
+```sh
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather --virtualmachines --vms_details
+```
+
+To collect all default information and VMs details:
+```sh
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather --default --vms_details
+```
+
+### Help Menu
+
+At any time you can check the help menu for usage details of the KubeVirt must-gather
+
+```sh
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather --help
+```
+
+```
+Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather [params...]
+
+  A client tool for gathering KubeVirt information in an OpenShift cluster
+
+  Available options:
+
+  > To collect all default information (this is automatically selected if no
+  > parameter is set) use
+  --default
+
+  > You can also select which information must-gather will collect by using one
+  > or more of the following parameters
+  --apiservices     (default)
+  --cdi             (default)
+  --crds            (default)
+  --crs             (default)
+  --hco             (default)
+  --nodes           (default)
+  --ns              (default)
+  --resources       (default)
+  --ssp             (default)
+  --virtualmachines (default)
+  --webhooks        (default)
+  --images
+  --vms_details
+  --vms_namespaces
+```
+
 ### Parallelism
 Some gathering activity can be done in parallel. Collecting resources one by one may be slow, and collecting too many 
 resources in parallel may fail. By default, 5 processes are running in parallel, and the rest of the processes are 
@@ -36,35 +98,35 @@ oc adm must-gather \
 
 ### Targeted gathering - VM information
 
-To collect the VM information, and all the namespaces that contains VMs call directly the `gather_vms_details` command:
+To collect the VM information, and all the namespaces that contains VMs call directly the `gather --vms_details` command:
 ```sh
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
-   -- /usr/bin/gather_vms_details
+   -- /usr/bin/gather --vms_details
 ```
 
 #### VMs in a Namespace
-The `gather_vms_details` command supports targeted gathering. By specifying a namespace, the command will only 
+The `gather --vms_details` command supports targeted gathering. By specifying a namespace, the command will only 
 collect the VMs in this namespace. For example, collecting all the VM information in namespace "vm1":
 ```sh
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- NS=ns1 \
-   /usr/bin/gather_vms_details
+   /usr/bin/gather --vms_details
 ```
 
 #### Specific VM
-By specifying the VM name in addition to the namespace, the `gather_vms_details` command will only collect the specific
+By specifying the VM name in addition to the namespace, the `gather --vms_details` command will only collect the specific
 VM information. For example, collecting the information of a specific VM called "testvm" in namespace "vm1":
 ```sh
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- NS=ns1 \
    VM=testvm \
-   /usr/bin/gather_vms_details
+   /usr/bin/gather --vms_details
 ```
 ***Note***: When collecting information for a specific VM, you must specify the namespace as well. Without the namespace,
-the `gather_vms_details` command exits and prints an error message.
+the `gather --vms_details` command exits and prints an error message.
 
 #### List of Specific VMs
 The `VM` environment variable can also be a comma-seperated list of VM names (without a space). For example:
@@ -73,10 +135,10 @@ oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- NS=ns1 \
    VM="testvm1,testvm34,testvm52,testvm74" \
-   /usr/bin/gather_vms_details
+   /usr/bin/gather --vms_details
 ```
 #### Gather VM by Regex Expression
-The `gather_vms_details` command also support gathering VM with regex expression.
+The `gather --vms_details` command also support gathering VM with regex expression.
 
 For example, suppose we have the following VMs in the cluster:
 ```
@@ -94,21 +156,21 @@ testvm5-6 testvm5-7 testvm5-8 testvm5-9 testvm5-10
 
 If we want to read only VMs that starts with testvm2, testvm3 or testvm4, and that their postfix number is odd, we can use this regex expression to for that: `^testvm[2-4]-[0-9]*[1,3,5,7,9]$`.
 
-Here is how to use it in the `gather_vms_details` command, to search VMs by regex:
+Here is how to use it in the `gather --vms_details` command, to search VMs by regex:
 ```sh
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    VM_EXP="^testvm[2-4]-[0-9]*[1,3,5,7,9]$" \
-   /usr/bin/gather_vms_details
+   /usr/bin/gather --vms_details
 ```
 
-Here is how to use it in the `gather_vms_details` command, to search VMs by regex in the `ns1` namespace:
+Here is how to use it in the `gather --vms_details` command, to search VMs by regex in the `ns1` namespace:
 ```sh
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- NS=ns1 \
    VM_EXP="^testvm[2-4]-[0-9]*[1,3,5,7,9]$" \
-   /usr/bin/gather_vms_details
+   /usr/bin/gather --vms_details
 ```
 
 ***Note***: When collecting information using the `VM` variable, the command will ignore the `VM_EPR` variable. Do not use both of them together.
@@ -116,19 +178,19 @@ oc adm must-gather \
 
 ### Targeted gathering - Images information
 
-It is possible to collect image, image-stream and image-stream-tags information using the `gather_images` command:
+It is possible to collect image, image-stream and image-stream-tags information using the `gather --images` command:
 ```sh
-oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather_images
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather --images
 ```
 
-The `gather_vms_details` and the `gather_images` commands support parallelism as well. To change the default number of processes of 5, add the
+The `gather --vms_details` and the `gather --images` commands support parallelism as well. To change the default number of processes of 5, add the
 `PROS` environment variable. This is only works when not using the `NS` environment variable:
 ```sh
-oc adm must-gather --image=quay.io/kubevirt/must-gather -- PROS=7 /usr/bin/gather_vms_details
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- PROS=7 /usr/bin/gather --vms_details
 ```
 Or
 ```sh
-oc adm must-gather --image=quay.io/kubevirt/must-gather -- PROS=3 /usr/bin/gather_images
+oc adm must-gather --image=quay.io/kubevirt/must-gather -- PROS=3 /usr/bin/gather --images
 ```
 
 ## Development
