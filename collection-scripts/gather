@@ -1,63 +1,171 @@
-#!/bin/bash -x
+#!/bin/bash
 
 export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 export PROS=${PROS:-5}
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
-# Resource list
-resources=()
+function main() {
+  declare no_flags="true"
+  declare -A requested_scripts=()
+  declare default_params=(
+    "--apiservices"
+    "--cdi"
+    "--crds"
+    "--crs"
+    "--hco"
+    "--nodes"
+    "--ns"
+    "--resources"
+    "--ssp"
+    "--virtualmachines"
+    "--webhooks"
+  )
 
-# HCO
-resources+=(catalogsource)
+  parse_flags "$@"
+  run_scripts
+  run_logs
 
-resources+=(Network-attachment-definitions)
+  sync
+  exit 0
+}
 
-# NodeNetworkState
-resources+=(nodenetworkstates nodenetworkconfigurationenactments nodenetworkconfigurationpolicies)
+function parse_flags {
+  while :; do
+    case $1 in
+      --help)
+        help
+        exit 0
+        ;;
+      --default)
+        no_flags="false"
+        set_default_as_requested
+        ;;
+      --apiservices)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --cdi)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --crds)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --crs)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --hco)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --images)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --nodes)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --ns)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --resources)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --ssp)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --virtualmachines)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --vms_details)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --vms_namespaces)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --webhooks)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -?*)
+        printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+        ;;
+      *) # Default case: No more options, so break out of the loop.
+        break
+    esac
+    shift
+  done
+}
 
-# ImageStreamTag
-resources+=(istag)
+function help {
+    echo "\
+Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather [params...]
 
-# Nodes and Machines
-resources+=(nodes)
-resources+=(machines)
+  A client tool for gathering KubeVirt information in an OpenShift cluster
 
-"${DIR_NAME}"/version
+  Available options:
 
-# Run the collection of resources using must-gather
-echo "${resources[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
+  > To see this help menu and exit use
+  --help
 
-"${DIR_NAME}"/vmConvertor
+  > To collect all default information (this is automatically selected if no
+  > parameter is set) use
+  --default
 
-# Collect relevant namespaces data
-"${DIR_NAME}"/gather_ns
+  > You can also select which information must-gather will collect by using one
+  > or more of the following parameters
+  --apiservices     (default)
+  --cdi             (default)
+  --crds            (default)
+  --crs             (default)
+  --hco             (default)
+  --nodes           (default)
+  --ns              (default)
+  --resources       (default)
+  --ssp             (default)
+  --virtualmachines (default)
+  --webhooks        (default)
+  --images
+  --vms_details
+  --vms_namespaces
+"
+}
 
-# Collect HCO details (first, because it's there before anything else)
-"${DIR_NAME}"/gather_hco
+function set_default_as_requested {
+  for default_param in "${default_params[@]}";
+  do
+    requested_scripts[$default_param]="true"
+  done
+}
 
-# Collect the CRDs
-"${DIR_NAME}"/gather_crds
+function run_scripts {
+  if [ "$no_flags" == "true" ]; then
+    set_default_as_requested
+  fi
 
-# Collect the CRs explicitly - some of them, like VMs, are collected by steps below
-"${DIR_NAME}"/gather_crs
+  for script in "${!requested_scripts[@]}";
+  do
+    echo "running gather_${script:2}"
+    eval "${DIR_NAME}/gather_${script:2}"
+  done
+}
 
-# Collect the apiservices
-"${DIR_NAME}"/gather_apiservices
+function run_logs {
+  echo "running logs"
+  "${DIR_NAME}"/logs.sh
+}
 
-# Collect SSP details
-"${DIR_NAME}"/gather_ssp
-
-# Collect nodes details
-"${DIR_NAME}"/gather_nodes
-
-# Collect CDI details
-"${DIR_NAME}"/gather_cdi
-
-# Collect the webhooks
-"${DIR_NAME}"/gather_webhooks
-
-"${DIR_NAME}"/logs.sh
-
-sync
-
-exit 0
+main "$@"; exit

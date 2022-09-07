@@ -45,6 +45,4 @@ echo "gather imagestreamtags"
 imagestreamtags=$(oc get imagestreamtags --no-headers --all-namespaces | awk '{print $1 "_" $2}')
 echo "${imagestreamtags[@]}" | tr ' ' '\n' | xargs -t -i{} -P "${PROS}" --max-args=1 sh -c 'gather_imagestreamtag $1' -- {}
 
-"${DIR_NAME}"/logs.sh
-
 sync

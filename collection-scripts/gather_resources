@@ -1,0 +1,28 @@
+#!/bin/bash -x
+
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+export PROS=${PROS:-5}
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+# Resource list
+resources=()
+
+# HCO
+resources+=(catalogsource)
+
+resources+=(Network-attachment-definitions)
+
+# NodeNetworkState
+resources+=(nodenetworkstates nodenetworkconfigurationenactments nodenetworkconfigurationpolicies)
+
+# ImageStreamTag
+resources+=(istag)
+
+# Nodes and Machines
+resources+=(nodes)
+resources+=(machines)
+
+"${DIR_NAME}"/version
+
+# Run the collection of resources using must-gather
+echo "${resources[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
