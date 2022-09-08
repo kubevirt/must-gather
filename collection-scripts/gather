@@ -96,6 +96,10 @@ function parse_flags {
         no_flags="false"
         requested_scripts[$1]="true"
         ;;
+      --instancetypes)
+        no_flags="false"
+        requested_scripts[$1]="true"
+        ;;
       --)
         shift
         break
@@ -141,6 +145,7 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   --images
   --vms_details
   --vms_namespaces
+  --instancetypes
 "
 }
 

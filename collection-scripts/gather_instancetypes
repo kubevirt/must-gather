@@ -1,0 +1,9 @@
+#!/bin/bash -x
+
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+PROS=${PROS:-5}
+
+resources=(virtualmachineinstancetype virtulmachineclusterinstancetype virtualmachinepreference virtualmachineclusterpreference)
+
+echo "${resources[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
+
