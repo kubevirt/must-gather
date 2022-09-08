@@ -1,6 +1,6 @@
 module github.com/kubevirt/must-gather/cmd/vmConvertor
 
-go 1.17
+go 1.19
 
 require (
 	github.com/imdario/mergo v0.3.5 // indirect

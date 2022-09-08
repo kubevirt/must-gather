@@ -17,7 +17,7 @@ jobs:
         ref: ${{ github.ref }}
     - uses: actions/setup-go@v2
       with:
-        go-version: '1.17' # The Go version to download (if necessary) and use.
+        go-version: '1.19' # The Go version to download (if necessary) and use.
     - name: Check scripts
       run: shellcheck -e SC2016 collection-scripts/*
     - name: check vmConvertor
