@@ -1,6 +1,6 @@
 module github.com/kubevirt/must-gather/scripts/release-notes
 
-go 1.17
+go 1.19
 
 require (
 	github.com/go-git/go-git/v5 v5.4.2

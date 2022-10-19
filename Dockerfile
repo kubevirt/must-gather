@@ -1,9 +1,9 @@
-FROM golang:1.17.0 AS go-builder
+FROM golang:1.19.2 AS go-builder
 WORKDIR /go/src/github.com/kubevirt/must-gather/cmd
 COPY cmd .
 RUN (cd vmConvertor && go build -ldflags="-s -w" .)
 
-FROM quay.io/openshift/origin-must-gather:4.9.0 as builder
+FROM quay.io/openshift/origin-must-gather:4.12.0 as builder
 
 FROM quay.io/centos/centos:stream8
 
