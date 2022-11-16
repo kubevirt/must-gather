@@ -1,7 +1,8 @@
 #!/bin/bash -x
 
-BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
-PROS=${PROS:-5}
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${DIR_NAME}/common.sh"
+check_command
 
 # Resource list
 resources=$(/usr/bin/oc get apiservices | grep kubevirt.io | awk '{ print $1 }')
