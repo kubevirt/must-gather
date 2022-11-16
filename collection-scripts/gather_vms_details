@@ -1,9 +1,9 @@
 #!/bin/bash -x
 
-export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
-export PROS="${PROS:-5}"
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-INSTALLATION_NAMESPACE="${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}"
+source "${DIR_NAME}/common.sh"
+check_command
+
 export QEMULOGPATH_1="/var/log/libvirt/qemu/"
 export QEMULOGPATH_2="/var/run/libvirt/qemu/log/"
 export QEMULOGPATH_3="/var/run/kubevirt-private/libvirt/qemu/log/"
