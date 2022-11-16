@@ -5,21 +5,20 @@ export PROS=${PROS:-5}
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 function main() {
-  declare no_flags="true"
-  declare -A requested_scripts=()
-  declare default_params=(
-    "--apiservices"
-    "--cdi"
-    "--crds"
-    "--crs"
-    "--hco"
-    "--nodes"
-    "--ns"
-    "--resources"
-    "--ssp"
-    "--virtualmachines"
-    "--webhooks"
+  declare mandatory_scripts=(
+    "apiservices"
+    "cdi"
+    "crds"
+    "crs"
+    "hco"
+    "nodes"
+    "ns"
+    "resources"
+    "ssp"
+    "virtualmachines"
+    "webhooks"
   )
+  declare requested_scripts=("${mandatory_scripts[@]}")
 
   parse_flags "$@"
   run_scripts
@@ -36,69 +35,15 @@ function parse_flags {
         help
         exit 0
         ;;
-      --default)
-        no_flags="false"
-        set_default_as_requested
-        ;;
-      --apiservices)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --cdi)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --crds)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --crs)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --hco)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
       --images)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --nodes)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --ns)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --resources)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --ssp)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --virtualmachines)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --vms_details)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --vms_namespaces)
-        no_flags="false"
-        requested_scripts[$1]="true"
-        ;;
-      --webhooks)
-        no_flags="false"
-        requested_scripts[$1]="true"
+        requested_scripts+=("images")
         ;;
       --instancetypes)
-        no_flags="false"
-        requested_scripts[$1]="true"
+        requested_scripts+=("instancetypes")
+        ;;
+      --vms_details)
+        requested_scripts+=("vms_details")
+        requested_scripts+=("vms_namespaces")
         ;;
       --)
         shift
@@ -125,52 +70,33 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   > To see this help menu and exit use
   --help
 
-  > To collect all default information (this is automatically selected if no
-  > parameter is set) use
-  --default
+  > The tool will always collect all control-plane logs and information.
+  > This will include:"
+    for collector in "${mandatory_scripts[@]}" ; do
+    echo "  > - $collector"
+    done
+    echo "\
 
-  > You can also select which information must-gather will collect by using one
-  > or more of the following parameters
-  --apiservices     (default)
-  --cdi             (default)
-  --crds            (default)
-  --crs             (default)
-  --hco             (default)
-  --nodes           (default)
-  --ns              (default)
-  --resources       (default)
-  --ssp             (default)
-  --virtualmachines (default)
-  --webhooks        (default)
+  > You can also choose to enable optional collectors combining one
+  > or more of the following parameters:
   --images
-  --vms_details
-  --vms_namespaces
   --instancetypes
+  --vms_details
 "
 }
 
-function set_default_as_requested {
-  for default_param in "${default_params[@]}";
-  do
-    requested_scripts[$default_param]="true"
-  done
-}
-
 function run_scripts {
-  if [ "$no_flags" == "true" ]; then
-    set_default_as_requested
-  fi
-
-  for script in "${!requested_scripts[@]}";
+  for script in "${requested_scripts[@]}";
   do
-    echo "running gather_${script:2}"
-    eval "${DIR_NAME}/gather_${script:2}"
+    script_name="gather_${script}"
+    echo "running ${script_name}"
+    eval USR_BIN_GATHER=1 "${DIR_NAME}/${script_name}"
   done
 }
 
 function run_logs {
   echo "running logs"
-  "${DIR_NAME}"/logs.sh
+  USR_BIN_GATHER=1 "${DIR_NAME}"/logs.sh
 }
 
 main "$@"; exit

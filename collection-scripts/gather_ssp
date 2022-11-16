@@ -1,7 +1,8 @@
 #!/bin/bash -x
 
-BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
-PROS=${PROS:-5}
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${DIR_NAME}/common.sh"
+check_command
 
 # we expect the KubeVirt templates to be deployed only in the `opneshift` namespace. But if this turns out not to be true, we need to know.
 namespaces=$(/usr/bin/oc get templates --all-namespaces -l 'template.kubevirt.io/type=base' -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' | uniq)

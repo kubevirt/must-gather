@@ -1,10 +1,10 @@
 #!/bin/bash -x
 
-# Workaround for: https://github.com/openshift/must-gather/issues/122
-
-BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
-PROS=${PROS:-5}
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${DIR_NAME}/common.sh"
+check_command
+
+# Workaround for: https://github.com/openshift/must-gather/issues/122
 
 IMAGES_PATH=${BASE_COLLECTION_PATH}/cluster-scoped-resources/images
 export NAMESPACE_PATH=${BASE_COLLECTION_PATH}/namespaces
