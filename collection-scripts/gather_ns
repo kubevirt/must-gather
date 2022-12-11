@@ -11,6 +11,9 @@ namespaces+=("${INSTALLATION_NAMESPACE}" openshift-operator-lifecycle-manager op
 # KubeVirt network related namespaces
 namespaces+=(openshift-sdn)
 
+# Golden images namesapce
+namespaces+=(openshift-virtualization-os-images)
+
 # CDI
 resources+=(cdi)
 
