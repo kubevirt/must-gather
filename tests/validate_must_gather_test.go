@@ -184,9 +184,6 @@ var _ = Describe("validate the must-gather output", func() {
 			Expect(err).ToNot(HaveOccurred())
 			missingExpectedFile := false
 			for _, node := range nodes {
-				if strings.Contains(node.Name(), "master") {
-					continue
-				}
 				Expect(node.IsDir()).To(BeTrue(), node.Name(), " should be a directory")
 				nodeDir := path.Join(nodesDir, node.Name())
 				nodeFiles, err := os.ReadDir(nodeDir)
