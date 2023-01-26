@@ -18,6 +18,13 @@ spec:
       serviceAccountName: node-gather
       terminationGracePeriodSeconds: 0
       hostNetwork: true
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
       containers:
       - name: node-probe
         image: MUST_GATHER_IMAGE
