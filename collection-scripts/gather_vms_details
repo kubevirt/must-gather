@@ -32,9 +32,9 @@ function gather_vm_info() {
   # VM : Bridge
   {
     echo "###################################"
-    echo "brctl show:"
+    echo "bridge link show:"
     echo "###################################"
-    /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- brctl show 2>/dev/null
+    /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- bridge link show 2>/dev/null
 
     echo "###################################"
     echo "bridge fdb show:"
