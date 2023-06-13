@@ -78,7 +78,7 @@ function get_vm_rule_tables() {
 
   handler=$(/usr/bin/oc get pods -A -l kubevirt.io=virt-handler -o=custom-columns=NAME:.metadata.name --field-selector spec.nodeName="${vmnode}" --no-headers)
 
-  pid=$(/usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "pgrep -f 'virt-launcher .*${vmuid}'")
+  pid=$(/usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "pgrep -f '^/usr/bin/virt-launcher .*${vmuid}'")
 
   if /usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "nft -v" > /dev/null 2>&1; then
     /usr/bin/oc exec -n "${INSTALLATION_NAMESPACE}" "${handler}" -- /bin/bash -c "nsenter -t ${pid} -n -- nft list ruleset" 2>/dev/null
