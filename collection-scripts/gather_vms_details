@@ -132,7 +132,7 @@ else
     exit 1
   fi
 
-  mapfile -t PODS < <(oc get pod --all-namespaces -l kubevirt.io=virt-launcher --no-headers -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" | awk '{print $1 "_" $2 "_" $3}')
+  mapfile -t PODS < <(oc get pod --all-namespaces -l kubevirt.io=virt-launcher --field-selector=status.phase!=Succeeded --no-headers -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" | awk '{print $1 "_" $2 "_" $3}')
   echo "${PODS[@]}" | tr ' ' '\n' | xargs -P "${PROS}" --max-args=1 -t -I{} sh -c 'gather_vm_by_pod_name $1' -- {}
 
 fi
