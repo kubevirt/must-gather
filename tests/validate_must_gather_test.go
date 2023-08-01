@@ -240,10 +240,16 @@ var _ = Describe("validate the must-gather output", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			fileExistsNotEmpty := map[string]bool{
-				"bridge.txt":     false,
-				"dumpxml.xml":    false,
-				"ruletables.txt": false,
-				"ip.txt":         false,
+				"bridge.txt":          false,
+				"dumpxml.xml":         false,
+				"ruletables.txt":      false,
+				"ip.txt":              false,
+				"capabilities.xml":    false,
+				"domcapabilities.xml": false,
+				"list.txt":            false,
+				"domblklist.txt":      false,
+				"domjobinfo.txt":      false,
+				"blockjob.txt":        false,
 			}
 
 			dotLoc := 0

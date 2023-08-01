@@ -19,8 +19,28 @@ function gather_vm_info() {
   /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" pod "$ocvm"
   /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" virtualmachineinstances "${vmname}"
 
+  # VM : capabilities
+  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r capabilities  > "${vm_collection_path}/${ocvm}.capabilities.xml"
+
+  # VM : domcapabilities
+  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh  domcapabilities  > "${vm_collection_path}/${ocvm}.domcapabilities.xml"
+
+  # VM : list
+  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r list --all  > "${vm_collection_path}/${ocvm}.list.txt"
+
   # VM : dumpxml
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh dumpxml "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.dumpxml.xml"
+  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r dumpxml "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.dumpxml.xml"
+
+  # VM : domblklist
+  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r domblklist "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.domblklist.txt"
+
+  # VM : domjobinfo
+  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r domjobinfo "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.domjobinfo.txt"
+
+  # VM : blockjob
+  awk 'NR > 2 {print $2}' "${vm_collection_path}/${ocvm}.domblklist.txt" | while IFS= read -r disk; do
+    /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r blockjob "${ocproject}_${vmname}" "${disk}" >> "${vm_collection_path}/${ocvm}.blockjob.txt"
+  done
 
   # VM : QEMU logs
   # libvirt logs are already relayed to virt-launcher, and we capture the virt-launcher pod logs elsewhere. We are want the QEMU log here.
