@@ -17,6 +17,7 @@ function main() {
     "ssp"
     "virtualmachines"
     "webhooks"
+    "instancetypes"
   )
   declare requested_scripts=("${mandatory_scripts[@]}")
 
@@ -37,9 +38,6 @@ function parse_flags {
         ;;
       --images)
         requested_scripts+=("images")
-        ;;
-      --instancetypes)
-        requested_scripts+=("instancetypes")
         ;;
       --vms_details)
         requested_scripts+=("vms_details")
@@ -80,7 +78,6 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   > You can also choose to enable optional collectors combining one
   > or more of the following parameters:
   --images
-  --instancetypes
   --vms_details
 "
 }

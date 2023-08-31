@@ -4,7 +4,19 @@ DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 source "${DIR_NAME}/common.sh"
 check_command
 
-resources=(virtualmachineinstancetype virtulmachineclusterinstancetype virtualmachinepreference virtualmachineclusterpreference)
+resources=(virtualmachineinstancetype virtualmachineclusterinstancetype virtualmachinepreference virtualmachineclusterpreference)
 
 echo "${resources[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
+
+function gather_controller_revision() {
+  oc_project=$(echo "$1" | awk -F_ '{print $1}')
+  revision_name=$(echo "$1" | awk -F_ '{print $2}')
+  echo "inspecting ${revision_name} controller revision"
+
+  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${oc_project}" controllerrevision "${revision_name}"
+}
+
+export -f gather_controller_revision
+controller_revisions=$(oc get controllerrevision --all-namespaces | grep virtualmachine | awk '{print $1 "_" $2}')
+echo "${controller_revisions[@]}" | tr ' ' '\n' | xargs -P "${PROS}" --max-args=1 -t -I{} sh -c 'gather_controller_revision $1' -- {}
 

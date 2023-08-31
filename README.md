@@ -73,7 +73,6 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   > You can also choose to enable optional collectors combining one
   > or more of the following parameters:
   --images
-  --instancetypes
   --vms_details
 ```
 
@@ -184,15 +183,6 @@ oc adm must-gather --image=quay.io/kubevirt/must-gather -- PROS=7 /usr/bin/gathe
 Or
 ```sh
 oc adm must-gather --image=quay.io/kubevirt/must-gather -- PROS=3 /usr/bin/gather --images
-```
-
-### Targeted gathering - Instancetypes and preferences
-
-VirtualMachineInstancetypes and VirtualMachinePreferences are not currently collected by default but can be
-by running the following command:
-
-```sh
-oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gather --instancetypes
 ```
 
 ## Development
