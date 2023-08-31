@@ -4,7 +4,7 @@ DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 source "${DIR_NAME}/common.sh"
 check_command
 
-resources=(virtualmachineinstancetype virtulmachineclusterinstancetype virtualmachinepreference virtualmachineclusterpreference)
+resources=(virtualmachineinstancetype virtualmachineclusterinstancetype virtualmachinepreference virtualmachineclusterpreference)
 
 echo "${resources[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'echo "inspecting $1" && oc adm inspect --dest-dir ${BASE_COLLECTION_PATH} --all-namespaces $1' -- {}
 
