@@ -105,6 +105,8 @@ var _ = Describe("validate the must-gather output", func() {
 				"cdiconfigs.cdi.kubevirt.io": false,
 				"cdis.cdi.kubevirt.io":       false,
 				"networkaddonsconfigs.networkaddonsoperator.network.kubevirt.io": false,
+				"virtualmachineclusterinstancetypes.instancetype.kubevirt.io":    false,
+				"virtualmachineclusterpreferences.instancetype.kubevirt.io":      false,
 			}
 
 			for expectedResource := range expectedResources {
@@ -120,7 +122,12 @@ var _ = Describe("validate the must-gather output", func() {
 				crDir := path.Join(crsDir, cr.Name())
 				crFiles, err := os.ReadDir(crDir)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(crFiles).Should(HaveLen(1))
+
+				if strings.Contains(cr.Name(), "instancetype") {
+					Expect(crFiles).ShouldNot(BeEmpty())
+				} else {
+					Expect(crFiles).Should(HaveLen(1))
+				}
 
 				if crFiles[0].IsDir() {
 					continue
