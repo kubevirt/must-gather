@@ -5,7 +5,6 @@ go 1.16
 require (
 	github.com/onsi/ginkgo/v2 v2.1.3
 	github.com/onsi/gomega v1.19.0
-	golang.org/x/net v0.0.0-20220403103023-749bd193bc2b // indirect
 	k8s.io/api v0.22.0
 	k8s.io/apimachinery v0.22.0
 	k8s.io/client-go v0.22.0
@@ -81,3 +80,6 @@ replace (
 )
 
 exclude github.com/openshift/client-go v0.0.0
+
+// FIX: CVE-2023-44487
+replace golang.org/x/net => golang.org/x/net v0.17.0
