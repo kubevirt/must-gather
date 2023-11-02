@@ -27,7 +27,23 @@ done
 
 # wait for the execution of the first 5 VMs
 for ns in {001..005}; do
-  ${CMD} wait -n "ns${ns}" vmi "testvm-ns${ns}-vm001" --for condition=Ready --timeout="300s"
+  found=false
+  for tries in {1..5}; do
+    if ${CMD} get -n "ns${ns}" vmi "testvm-ns${ns}-vm001"; then
+      found=true
+      break
+    else
+      echo "vmi ns${ns}/testvm-ns${ns}-vm001 does not exist yet. waiting 10 second"
+      sleep 10
+    fi
+  done
+
+  if [[ $found != "true" ]]; then
+    echo "vmi ns${ns}/testvm-ns${ns}-vm001 was not created"
+    exit 1
+  fi
+
+  ${CMD} wait -n "ns${ns}" vmi "testvm-ns${ns}-vm001" --for condition=Ready --timeout=300s
 done
 
 ${CMD} get vmis --all-namespaces
