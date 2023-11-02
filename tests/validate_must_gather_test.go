@@ -45,7 +45,7 @@ var _ = Describe("validate the must-gather output", func() {
 			}
 
 			for expectedResource := range expectedResources {
-				Expect(fileInDir(crs, expectedResource))
+				Expect(fileInDir(crs, expectedResource)).To(BeTrue())
 			}
 
 			for _, cr := range crs {
@@ -110,7 +110,7 @@ var _ = Describe("validate the must-gather output", func() {
 			}
 
 			for expectedResource := range expectedResources {
-				Expect(fileInDir(crs, expectedResource))
+				Expect(fileInDir(crs, expectedResource)).To(BeTrue())
 			}
 
 			for _, cr := range crs {
