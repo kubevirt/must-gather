@@ -1,0 +1,15 @@
+#!/bin/bash -x
+
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${DIR_NAME}/common.sh"
+check_command
+
+VIRTUALIZATION_PATH="${BASE_COLLECTION_PATH}/virtualization"
+mkdir -p "${VIRTUALIZATION_PATH}"
+
+function collect_running_vms_count() {
+  /usr/bin/oc get vmi --all-namespaces -o=jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | wc -w > "${VIRTUALIZATION_PATH}/running_vms_count.txt"
+}
+
+collect_running_vms_count
+

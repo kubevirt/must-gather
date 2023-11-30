@@ -337,6 +337,20 @@ var _ = Describe("validate the must-gather output", func() {
 			Entry("should gather resources in ns005", "ns005"),
 		)
 	})
+
+	Context("[level:product]validate the virtualization directory", Label("level:product"), func() {
+		virtualizationDir := "virtualization"
+
+		// This test assumes, according to automation/create_workloads.sh, that there are 5 running VMs in the cluster.
+		It("should validate the running VMs count", func() {
+			runningVmsCountPath := path.Join(outputDir, virtualizationDir, "running_vms_count.txt")
+			countBytes, err := os.ReadFile(runningVmsCountPath)
+			Expect(err).ToNot(HaveOccurred())
+
+			count := strings.TrimSpace(string(countBytes))
+			Expect(count).To(Equal("5"))
+		})
+	})
 })
 
 func validateVmFile(vm, ns, vmPath string) {
