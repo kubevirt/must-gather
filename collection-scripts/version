@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
-VERSION_FILE=${BASE_COLLECTION_PATH}/version.txt
+VERSION_FILE=${BASE_COLLECTION_PATH}/version
 
 function version() {
   # get version from image
