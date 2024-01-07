@@ -84,12 +84,22 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
 }
 
 function run_scripts {
+  # Store PIDs of all the subprocesses
+  pids=()
+  
   for script in "${requested_scripts[@]}";
   do
     script_name="gather_${script}"
     echo "running ${script_name}"
-    eval USR_BIN_GATHER=1 "${DIR_NAME}/${script_name}"
+    eval USR_BIN_GATHER=1 "${DIR_NAME}/${script_name}" &
+    pids+=($!)
   done
+
+  # Check if PID array has any values, if so, wait for them to finish
+  if [ ${#pids[@]} -ne 0 ]; then
+      echo "Waiting on subprocesses to finish execution."
+      wait "${pids[@]}"
+  fi
 }
 
 function run_logs {
