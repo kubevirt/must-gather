@@ -3,7 +3,7 @@ WORKDIR /go/src/github.com/kubevirt/must-gather/cmd
 COPY cmd .
 RUN (cd vmConvertor && go build -ldflags="-s -w" .)
 
-FROM quay.io/openshift/origin-must-gather:4.13.0 as builder
+FROM quay.io/openshift/origin-must-gather:4.16 as builder
 
 FROM quay.io/centos/centos:stream8
 
