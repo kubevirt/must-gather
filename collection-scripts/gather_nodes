@@ -3,6 +3,7 @@
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 source "${DIR_NAME}/common.sh"
 check_command
+get_log_collection_args
 
 MANIFEST_PATH=${MANIFEST_PATH:-"/etc"}
 
@@ -111,7 +112,7 @@ echo "${pods[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 
 
 # Collect journal logs for specified units for all nodes
 nodes=$(oc get nodes --no-headers -o custom-columns=':metadata.name')
-echo "${nodes[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'mkdir -p $2; oc adm node-logs $1 -u NetworkManager > $2/${1}_logs_NetworkManager' -- {} "${NODES_PATH}"/{}
+echo "${nodes[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'mkdir -p $2; oc adm node-logs ${node_log_collection_args} $1 -u NetworkManager > $2/${1}_logs_NetworkManager' -- {} "${NODES_PATH}"/{}
 
 oc delete -f "${DAEMONSET_MANIFEST}"
 oc delete -f "${CRD_MANIFEST}"

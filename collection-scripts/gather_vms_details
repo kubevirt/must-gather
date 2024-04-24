@@ -3,6 +3,7 @@
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 source "${DIR_NAME}/common.sh"
 check_command
+get_log_collection_args
 
 export QEMULOGPATH_1="/var/log/libvirt/qemu/"
 export QEMULOGPATH_2="/var/run/libvirt/qemu/log/"
@@ -16,8 +17,10 @@ function gather_vm_info() {
   vm_collection_path="${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms/${vmname}"
   mkdir -p "${vm_collection_path}"
 
-  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" pod "$ocvm"
-  /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" virtualmachineinstances "${vmname}"
+  # shellcheck disable=SC2086
+  /usr/bin/oc adm inspect ${log_collection_args} --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" pod "$ocvm"
+  # shellcheck disable=SC2086
+  /usr/bin/oc adm inspect ${log_collection_args} --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" virtualmachineinstances "${vmname}"
 
   # VM : capabilities
   /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r capabilities  > "${vm_collection_path}/${ocvm}.capabilities.xml"

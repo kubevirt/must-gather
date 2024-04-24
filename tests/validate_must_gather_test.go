@@ -1,6 +1,7 @@
 package tests_test
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"regexp"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -207,6 +209,38 @@ var _ = Describe("validate the must-gather output", func() {
 		})
 
 		logger.Print("outputDir:", outputDir)
+
+	})
+
+	Context("[level:product]validate usage of inspection parameters", Label("level:product"), func() {
+		It("should validate inspect and node-logs parameters usage on all the relevant logged commands", func() {
+			logfile, err := getMGlogfile()
+			Expect(err).ToNot(HaveOccurred())
+
+			space := regexp.MustCompile(`\s+`)
+
+			readFile, err := os.Open(logfile)
+			Expect(err).ToNot(HaveOccurred())
+			fileScanner := bufio.NewScanner(readFile)
+			fileScanner.Split(bufio.ScanLines)
+			var inspectcmdLines []string
+			var nodelogsLines []string
+
+			for fileScanner.Scan() {
+				line := space.ReplaceAllString(fileScanner.Text(), " ")
+				if strings.Contains(line, "oc adm inspect") {
+					inspectcmdLines = append(inspectcmdLines, line)
+				}
+				if strings.Contains(line, "oc adm node-logs") {
+					nodelogsLines = append(nodelogsLines, line)
+				}
+			}
+
+			readFile.Close()
+
+			Expect(inspectcmdLines).To(HaveEach(ContainSubstring("${log_collection_args}")), "all the inspect cmd should pass log collection args")
+			Expect(nodelogsLines).To(HaveEach(ContainSubstring("${node_log_collection_args}")), "all the node-logs cmd should pass node log collection args")
+		})
 	})
 
 	Context("[level:workloads]validate workloads", Label("level:workloads"), func() {
@@ -401,4 +435,20 @@ func getDataDir() (string, error) {
 	}
 
 	return "", errors.New("can't find the cluster directory")
+}
+
+func getMGlogfile() (string, error) {
+	const logfilename = "must-gather.log"
+	outputDir, err := getDataDir()
+	if err != nil {
+		return "", err
+	}
+
+	mgLogFile := path.Join(outputDir, logfilename)
+	if _, err := os.Stat(mgLogFile); err == nil {
+		return mgLogFile, nil
+
+	}
+
+	return "", errors.New("can't find must-gather log file")
 }

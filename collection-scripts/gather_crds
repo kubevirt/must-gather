@@ -3,11 +3,12 @@
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 source "${DIR_NAME}/common.sh"
 check_command
+get_log_collection_args
 
 # Resource list
 CRDS=$(/usr/bin/oc get crd | grep kubevirt.io | awk '{print $1}')
 
 # Run the collection of crds using must-gather
-echo "${CRDS[@]}" | tr ' ' '\n' | xargs -t -I{}  -P "${PROS}" --max-args=1 sh -c '/usr/bin/oc adm inspect crd --dest-dir ${BASE_COLLECTION_PATH} $1' -- {}
+echo "${CRDS[@]}" | tr ' ' '\n' | xargs -t -I{}  -P "${PROS}" --max-args=1 sh -c '/usr/bin/oc adm inspect ${log_collection_args} crd --dest-dir ${BASE_COLLECTION_PATH} $1' -- {}
 
 exit 0
