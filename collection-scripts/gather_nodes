@@ -32,7 +32,6 @@ DAEMONSET_MANIFEST="${MANIFEST_PATH}/node-gather-ds.yaml"
 
 if [[ -z ${MUST_GATHER_IMAGE} ]]; then
   NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-  POD_NAME=$(oc get pods -l app=must-gather -n "$NAMESPACE" -o'custom-columns=name:metadata.name' --no-headers)
   MUST_GATHER_IMAGE=${MUST_GATHER_IMAGE:-$(oc get pod -n "$NAMESPACE" "$POD_NAME" -o jsonpath="{.spec.containers[0].image}")}
 fi
 
