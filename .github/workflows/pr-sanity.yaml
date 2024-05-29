@@ -21,10 +21,10 @@ jobs:
     - name: Run ShellCheck
       uses: ludeeus/action-shellcheck@master
       env:
-        SHELLCHECK_OPTS: -a -e SC2016 --source-path=./collection-scripts
+        SHELLCHECK_OPTS: -a -e SC2016 -e SC2317 --source-path=./collection-scripts
       with:
          check_together: 'yes'
-         version: v0.8.0
+         version: v0.10.0
          scandir: './collection-scripts/'
     - name: check vmConvertor
       run: |-

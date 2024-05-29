@@ -12,7 +12,7 @@ build: check-image-env docker-build docker-push
 
 # check
 check:
-	shellcheck -e SC2016 collection-scripts/*
+	shellcheck -a -e SC2016 -e SC2317 --source-path=./collection-scripts collection-scripts/*
 
 docker-build: check-image-env
 	docker build -t ${IMAGE_REGISTRY}/${MUST_GATHER_IMAGE}:${IMAGE_TAG} .
