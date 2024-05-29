@@ -16,7 +16,7 @@ function version() {
   # if version still not found, use Unknown
   [ -z "${version}" ] && version="Unknown"
 
-  echo ${version}
+  echo "${version}"
 }
 
 if [[ ! -f ${VERSION_FILE} ]]; then
