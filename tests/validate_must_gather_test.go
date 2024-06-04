@@ -376,7 +376,7 @@ var _ = Describe("validate the must-gather output", func() {
 		virtualizationDir := "virtualization"
 
 		// This test assumes, according to automation/create_workloads.sh, that there are 5 running VMs in the cluster.
-		It("should validate the running VMs count", func() {
+		It("[test_id:11280]should validate the running VMs count", func() {
 			runningVmsCountPath := path.Join(outputDir, virtualizationDir, "running_vms_count.txt")
 			countBytes, err := os.ReadFile(runningVmsCountPath)
 			Expect(err).ToNot(HaveOccurred())
