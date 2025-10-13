@@ -1,13 +1,14 @@
-FROM golang:1.19.2 AS go-builder
+FROM golang:1.24 AS go-builder
 WORKDIR /go/src/github.com/kubevirt/must-gather/cmd
 COPY cmd .
+ENV CGO_ENABLED=0
 RUN (cd vmConvertor && go build -ldflags="-s -w" .)
 
-FROM quay.io/openshift/origin-must-gather:4.16 as builder
+FROM quay.io/openshift/origin-must-gather:4.16 AS builder
 
-FROM quay.io/centos/centos:stream8
+FROM quay.io/centos/centos:stream9
 
-ENV INSTALLATION_NAMESPACE kubevirt-hyperconverged
+ENV INSTALLATION_NAMESPACE=kubevirt-hyperconverged
 
 # For gathering data from nodes
 RUN dnf update -y && \

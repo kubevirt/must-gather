@@ -1,6 +1,6 @@
 module github.com/kubevirt/must-gather/tests
 
-go 1.20
+go 1.24
 
 require (
 	github.com/onsi/ginkgo/v2 v2.13.0
