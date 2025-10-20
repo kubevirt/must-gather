@@ -1,20 +1,20 @@
-FROM golang:1.19.2 AS go-builder
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21 AS go-builder
+
 WORKDIR /go/src/github.com/kubevirt/must-gather/cmd
 COPY cmd .
 RUN (cd vmConvertor && go build -ldflags="-s -w" .)
 
-FROM quay.io/openshift/origin-must-gather:4.16 as builder
+FROM registry.ci.openshift.org/ocp/4.21:cli
 
-FROM quay.io/centos/centos:stream8
+RUN oc version
 
-ENV INSTALLATION_NAMESPACE kubevirt-hyperconverged
+ENV INSTALLATION_NAMESPACE=kubevirt-hyperconverged
 
 # For gathering data from nodes
 RUN dnf update -y && \
     dnf install iproute tcpdump pciutils util-linux nftables rsync -y && \
     dnf clean all
 
-COPY --from=builder /usr/bin/oc /usr/bin/oc
 COPY --from=go-builder /go/src/github.com/kubevirt/must-gather/cmd/vmConvertor/vmConvertor /usr/bin/
 
 # Copy all collection scripts to /usr/bin

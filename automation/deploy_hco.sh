@@ -2,7 +2,7 @@
 
 set -ex
 
-HCO_VERSION=1.9.0
+HCO_VERSION=1.17.0
 UNSTABLE="-unstable"
 MINOR_VER="${HCO_VERSION%.*}"
 CMD=oc
