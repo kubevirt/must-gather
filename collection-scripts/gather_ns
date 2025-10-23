@@ -5,6 +5,8 @@ source "${DIR_NAME}/common.sh"
 check_command
 get_log_collection_args
 
+OS_IMAGE_NS="${OS_IMAGE_NS:-kubevirt-os-images}"
+
 namespaces=()
 # KubeVirt HCO related namespaces
 namespaces+=("${INSTALLATION_NAMESPACE}" openshift-operator-lifecycle-manager openshift-marketplace)
@@ -18,7 +20,7 @@ elif [[ "${NETWORK_TYPE}" == "openshiftsdn" ]]; then
 fi
 
 # Golden images namesapce
-namespaces+=(openshift-virtualization-os-images)
+namespaces+=("${OS_IMAGE_NS}")
 
 # CDI
 resources+=(cdi)
