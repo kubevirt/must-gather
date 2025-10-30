@@ -430,11 +430,32 @@ func getDataDir() (string, error) {
 
 	for _, file := range files {
 		if file.IsDir() {
-			return path.Join(outputDir, file.Name()), nil
+			dirPath := path.Join(outputDir, file.Name())
+			if checkVersionFile(dirPath) {
+				return dirPath, nil
+			}
 		}
 	}
 
 	return "", errors.New("can't find the cluster directory")
+}
+
+// checkVersionFile checks if the current directory is ours.
+// if there is a version file, and if it starts with "kubevirt/must-gather", then
+// it was created by our must-gather image
+func checkVersionFile(dirPath string) bool {
+	versionFile, err := os.Open(path.Join(dirPath, "version"))
+	if err != nil {
+		return false
+	}
+	defer versionFile.Close()
+
+	scanner := bufio.NewScanner(versionFile)
+	if scanner.Scan() {
+		return scanner.Text() == "kubevirt/must-gather"
+	}
+
+	return false
 }
 
 func getMGlogfile() (string, error) {

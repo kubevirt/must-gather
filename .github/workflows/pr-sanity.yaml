@@ -12,12 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
       with:
         ref: ${{ github.ref }}
-    - uses: actions/setup-go@v2
+    - uses: actions/setup-go@v5
       with:
-        go-version: '1.19' # The Go version to download (if necessary) and use.
+        go-version-file: cmd/vmConvertor/go.mod
     - name: Run ShellCheck
       uses: ludeeus/action-shellcheck@master
       env:

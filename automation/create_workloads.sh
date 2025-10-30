@@ -15,14 +15,14 @@ for ns in {001..005}; do
     if [[ $(($n%2)) -eq 0 ]]; then
       EXP="; ${LABEL_EXP}"
     fi
-    sed -e "s#__NS__#${ns}#g; s|##VM##|${vm}|g${EXP}" automation/vm.yaml | ${CMD} apply -f -
+
+    RUNNING=
+    if [[ $n == '1' ]]; then
+      RUNNING='; s|^(  runStrategy: )Halted$|\1Always|g'
+    fi
+    sed -E "s#__NS__#${ns}#g; s|##VM##|${vm}|g${EXP}${RUNNING}" automation/vm.yaml | ${CMD} apply -f -
 
   done
-
-  # start 5 VMs
-  if [[ ${ns} -le 5 ]]; then
-    ${CMD} patch -n "ns${ns}" virtualmachine "testvm-ns${ns}-vm001" --type merge -p '{"spec":{"running":true}}'
-  fi
 done
 
 # wait for the execution of the first 5 VMs
