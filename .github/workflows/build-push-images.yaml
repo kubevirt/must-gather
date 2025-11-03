@@ -15,6 +15,8 @@ jobs:
       QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
       REGISTRY_NAMESPACE: kubevirt
     steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
       - name: Checkout the latest code
         uses: actions/checkout@v4
         with:
@@ -22,10 +24,9 @@ jobs:
       - name: Check build
         run: |
           make check MUST_GATHER_IMAGE=$REGISTRY_NAMESPACE/must-gather
-      - name: Build image
-        run: |
-          make docker-build MUST_GATHER_IMAGE=$REGISTRY_NAMESPACE/must-gather
-      - name: Push image
+      - name: Build and Push multi-arch Image
+        env:
+          MUST_GATHER_IMAGE: $REGISTRY_NAMESPACE/must-gather
         run: |
           echo $QUAY_PASSWORD | docker login -u $QUAY_USERNAME --password-stdin quay.io
-          make build MUST_GATHER_IMAGE=$REGISTRY_NAMESPACE/must-gather
+          make docker-multi-arch MUST_GATHER_IMAGE=$REGISTRY_NAMESPACE/must-gather
