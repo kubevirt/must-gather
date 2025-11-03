@@ -23,6 +23,9 @@ resources+=(istag)
 resources+=(nodes)
 resources+=(machines)
 
+# Storage
+resources+=(storageclasses csidrivers csinodes csistoragecapacities volumeattachments persistentvolumes)
+
 "${DIR_NAME}"/version
 
 # Run the collection of resources using must-gather
