@@ -24,7 +24,7 @@ resources+=(nodes)
 resources+=(machines)
 
 # Storage
-resources+=(StorageClass CSIDriver CSINode CSIStorageCapacity VolumeAttachment PersistentVolume)
+resources+=(storageclasses csidrivers csinodes csistoragecapacities volumeattachments persistentvolumes)
 
 "${DIR_NAME}"/version
 
