@@ -1,0 +1,35 @@
+FROM --platform=${BUILDPLATFORM} quay.io/projectquay/golang:1.24 AS go-builder
+
+WORKDIR /go/src/github.com/kubevirt/must-gather/cmd
+COPY cmd .
+
+ARG OC_VERSION=4.20.0
+ARG TARGETARCH
+
+RUN cd vmConvertor && \
+    GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-s -w" . && \
+    cd .. && \
+    curl -O https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSION}/openshift-client-linux-${TARGETARCH}-rhel9.tar.gz && \
+    tar -C /usr/bin/ -xzf openshift-client-linux-${TARGETARCH}-rhel9.tar.gz
+
+FROM --platform=${TARGETPLATFORM} quay.io/centos/centos:stream9
+
+ENV INSTALLATION_NAMESPACE=kubevirt-hyperconverged
+
+ARG OC_VERSION=4.20.0
+
+# For gathering data from nodes
+RUN dnf update -y && \
+    dnf install iproute tcpdump pciutils util-linux nftables rsync -y && \
+    dnf clean all
+
+COPY --from=go-builder /go/src/github.com/kubevirt/must-gather/cmd/vmConvertor/vmConvertor /usr/bin/
+COPY --from=go-builder /usr/bin/oc /usr/bin/
+
+# Copy all collection scripts to /usr/bin
+COPY collection-scripts/* /usr/bin/
+
+# Copy node-gather resources to /etc
+COPY node-gather /etc/
+
+ENTRYPOINT /usr/bin/gather
