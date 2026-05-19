@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-billy/v5/util"
+	"github.com/go-git/go-git/v5/internal/pathutil"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
@@ -29,10 +30,23 @@ var (
 	// ErrGlobNoMatches in an AddGlob if the glob pattern does not match any
 	// files in the worktree.
 	ErrGlobNoMatches = errors.New("glob pattern did not match any files")
+	// ErrUnsupportedStatusStrategy occurs when an invalid StatusStrategy is used
+	// when processing the Worktree status.
+	ErrUnsupportedStatusStrategy = errors.New("unsupported status strategy")
 )
 
 // Status returns the working tree status.
 func (w *Worktree) Status() (Status, error) {
+	return w.StatusWithOptions(StatusOptions{Strategy: defaultStatusStrategy})
+}
+
+// StatusOptions defines the options for Worktree.StatusWithOptions().
+type StatusOptions struct {
+	Strategy StatusStrategy
+}
+
+// StatusWithOptions returns the working tree status.
+func (w *Worktree) StatusWithOptions(o StatusOptions) (Status, error) {
 	var hash plumbing.Hash
 
 	ref, err := w.r.Head()
@@ -44,11 +58,14 @@ func (w *Worktree) Status() (Status, error) {
 		hash = ref.Hash()
 	}
 
-	return w.status(hash)
+	return w.status(o.Strategy, hash)
 }
 
-func (w *Worktree) status(commit plumbing.Hash) (Status, error) {
-	s := make(Status)
+func (w *Worktree) status(ss StatusStrategy, commit plumbing.Hash) (Status, error) {
+	s, err := ss.new(w)
+	if err != nil {
+		return nil, err
+	}
 
 	left, err := w.diffCommitWithStaging(commit, false)
 	if err != nil {
@@ -125,7 +142,7 @@ func (w *Worktree) diffStagingWithWorktree(reverse, excludeIgnoredChanges bool) 
 		return nil, err
 	}
 
-	to := filesystem.NewRootNode(w.Filesystem, submodules)
+	to := filesystem.NewRootNodeWithOptions(w.Filesystem, submodules, filesystem.Options{Index: idx})
 
 	var c merkletrie.Changes
 	if reverse {
@@ -271,7 +288,7 @@ func diffTreeIsEquals(a, b noder.Hasher) bool {
 // no error is returned. When path is a file, the blob.Hash is returned.
 func (w *Worktree) Add(path string) (plumbing.Hash, error) {
 	// TODO(mcuadros): deprecate in favor of AddWithOption in v6.
-	return w.doAdd(path, make([]gitignore.Pattern, 0))
+	return w.doAdd(path, make([]gitignore.Pattern, 0), false)
 }
 
 func (w *Worktree) doAddDirectory(idx *index.Index, s Status, directory string, ignorePattern []gitignore.Pattern) (added bool, err error) {
@@ -321,7 +338,7 @@ func (w *Worktree) AddWithOptions(opts *AddOptions) error {
 	}
 
 	if opts.All {
-		_, err := w.doAdd(".", w.Excludes)
+		_, err := w.doAdd(".", w.Excludes, false)
 		return err
 	}
 
@@ -329,16 +346,11 @@ func (w *Worktree) AddWithOptions(opts *AddOptions) error {
 		return w.AddGlob(opts.Glob)
 	}
 
-	_, err := w.Add(opts.Path)
+	_, err := w.doAdd(opts.Path, make([]gitignore.Pattern, 0), opts.SkipStatus)
 	return err
 }
 
-func (w *Worktree) doAdd(path string, ignorePattern []gitignore.Pattern) (plumbing.Hash, error) {
-	s, err := w.Status()
-	if err != nil {
-		return plumbing.ZeroHash, err
-	}
-
+func (w *Worktree) doAdd(path string, ignorePattern []gitignore.Pattern, skipStatus bool) (plumbing.Hash, error) {
 	idx, err := w.r.Storer.Index()
 	if err != nil {
 		return plumbing.ZeroHash, err
@@ -348,6 +360,19 @@ func (w *Worktree) doAdd(path string, ignorePattern []gitignore.Pattern) (plumbi
 	var added bool
 
 	fi, err := w.Filesystem.Lstat(path)
+
+	// status is required for doAddDirectory
+	var s Status
+	var err2 error
+	if !skipStatus || fi == nil || fi.IsDir() {
+		s, err2 = w.Status()
+		if err2 != nil {
+			return plumbing.ZeroHash, err2
+		}
+	}
+
+	path = filepath.Clean(path)
+
 	if err != nil || !fi.IsDir() {
 		added, h, err = w.doAddFile(idx, s, path, ignorePattern)
 	} else {
@@ -421,8 +446,9 @@ func (w *Worktree) AddGlob(pattern string) error {
 
 // doAddFile create a new blob from path and update the index, added is true if
 // the file added is different from the index.
+// if s status is nil will skip the status check and update the index anyway
 func (w *Worktree) doAddFile(idx *index.Index, s Status, path string, ignorePattern []gitignore.Pattern) (added bool, h plumbing.Hash, err error) {
-	if s.File(path).Worktree == Unmodified {
+	if s != nil && s.File(path).Worktree == Unmodified {
 		return false, h, nil
 	}
 	if len(ignorePattern) > 0 {
@@ -481,7 +507,7 @@ func (w *Worktree) copyFileToStorage(path string) (hash plumbing.Hash, err error
 	return w.r.Storer.SetEncodedObject(obj)
 }
 
-func (w *Worktree) fillEncodedObjectFromFile(dst io.Writer, path string, fi os.FileInfo) (err error) {
+func (w *Worktree) fillEncodedObjectFromFile(dst io.Writer, path string, _ os.FileInfo) (err error) {
 	src, err := w.Filesystem.Open(path)
 	if err != nil {
 		return err
@@ -496,7 +522,7 @@ func (w *Worktree) fillEncodedObjectFromFile(dst io.Writer, path string, fi os.F
 	return err
 }
 
-func (w *Worktree) fillEncodedObjectFromSymlink(dst io.Writer, path string, fi os.FileInfo) error {
+func (w *Worktree) fillEncodedObjectFromSymlink(dst io.Writer, path string, _ os.FileInfo) error {
 	target, err := w.Filesystem.Readlink(path)
 	if err != nil {
 		return err
@@ -520,6 +546,14 @@ func (w *Worktree) addOrUpdateFileToIndex(idx *index.Index, filename string, h p
 }
 
 func (w *Worktree) doAddFileToIndex(idx *index.Index, filename string, h plumbing.Hash) error {
+	// Mirror upstream's Index.Add gate at the v5 caller boundary: the
+	// index feeds future trees, so a name that the tree-side
+	// pathutil.ValidTreePath gate would reject must not enter the
+	// index in the first place. v5 keeps Index.Add's existing signature
+	// for API compatibility, so the validation happens here.
+	if err := pathutil.ValidTreePath(filename); err != nil {
+		return err
+	}
 	return w.doUpdateFileToIndex(idx.Add(filename), filename, h)
 }
 
@@ -536,9 +570,11 @@ func (w *Worktree) doUpdateFileToIndex(e *index.Entry, filename string, h plumbi
 		return err
 	}
 
-	if e.Mode.IsRegular() {
-		e.Size = uint32(info.Size())
-	}
+	// The entry size must always reflect the current state, otherwise
+	// it will cause go-git's Worktree.Status() to divert from "git status".
+	// The size of a symlink is the length of the path to the target.
+	// The size of Regular and Executable files is the size of the files.
+	e.Size = uint32(info.Size())
 
 	fillSystemInfo(e, info.Sys())
 	return nil
