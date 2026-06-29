@@ -1,0 +1,235 @@
+#!/bin/bash -x
+
+# Checks installed VirtIO driver versions against the versions shipped in the
+# cluster's virtio-win container disk. VMs without the QEMU guest agent (e.g.,
+# Linux VMs, or Windows VMs without the agent installed) are skipped.
+#
+# Output structure:
+#   <base>/driver-check/
+#     baseline.json            - virtio-win image ref and baseline driver version
+#     summary.json             - cluster-wide summary of all VMs checked
+#     vms/<namespace>/<vm>/
+#       installed-drivers.json - raw guest-get-devices output (VirtIO only)
+#       report.json            - comparison report with status per driver
+
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${DIR_NAME}/common.sh"
+check_command
+
+VIRTIO_VENDOR_ID=6900  # 0x1AF4 in decimal
+
+DRIVER_CHECK_PATH="${BASE_COLLECTION_PATH}/driver-check"
+mkdir -p "${DRIVER_CHECK_PATH}"
+
+# ---------------------------------------------------------------------------
+# Baseline: get the expected driver version from the in-cluster virtio-win
+# container disk image shipped with this CNV release.
+# ---------------------------------------------------------------------------
+
+get_baseline() {
+    local virtio_img ns
+
+    # The hco-operator may be in openshift-cnv or kubevirt-hyperconverged
+    for ns in "${INSTALLATION_NAMESPACE}" openshift-cnv kubevirt-hyperconverged; do
+        virtio_img=$(/usr/bin/oc get deploy hco-operator \
+            -n "${ns}" \
+            -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="VIRTIOWIN_CONTAINER")].value}' 2>/dev/null)
+        if [[ -n "${virtio_img}" ]]; then
+            break
+        fi
+    done
+
+    if [[ -z "${virtio_img}" ]]; then
+        echo "WARNING: Could not find VIRTIOWIN_CONTAINER in hco-operator deployment" >&2
+        return 1
+    fi
+
+    echo "Extracting baseline driver version from ${virtio_img}..." >&2
+
+    local raw
+    raw=$(/usr/bin/oc run must-gather-virtio-ver \
+        --rm -i --restart=Never --quiet \
+        --image="${virtio_img}" \
+        --command -- sh -c 'grep -a "^DriverVer" /disk/*' 2>/dev/null)
+
+    local baseline_version
+    baseline_version=$(echo "${raw}" \
+        | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' \
+        | sort -V | tail -1)
+
+    if [[ -z "${baseline_version}" ]]; then
+        echo "WARNING: Could not extract driver version from virtio-win image" >&2
+        return 1
+    fi
+
+    jq -n \
+        --arg image "${virtio_img}" \
+        --arg version "${baseline_version}" \
+        '{"image": $image, "version": $version}' \
+        > "${DRIVER_CHECK_PATH}/baseline.json"
+
+    echo "${baseline_version}"
+}
+
+# ---------------------------------------------------------------------------
+# Query a single VM's installed VirtIO drivers via the QEMU guest agent.
+# ---------------------------------------------------------------------------
+
+get_vm_drivers() {
+    local pod="$1" ns="$2"
+
+    local raw
+    raw=$(/usr/bin/oc exec -n "${ns}" "${pod}" -c compute -- \
+        virsh qemu-agent-command "${ns}_${vm}" \
+        '{"execute": "guest-get-devices"}' 2>/dev/null)
+
+    if [[ -z "${raw}" ]]; then
+        return 1
+    fi
+
+    echo "${raw}" | jq -r \
+        "[.return[] | select(.id.\"vendor-id\" == ${VIRTIO_VENDOR_ID}) |
+         {name: .\"driver-name\", version: .\"driver-version\",
+          device_id: (.id.\"device-id\" | tostring)}]"
+}
+
+# ---------------------------------------------------------------------------
+# Compare installed version against baseline. Outputs a status string.
+# ---------------------------------------------------------------------------
+
+compare_versions() {
+    local installed="$1" baseline="$2"
+
+    IFS='.' read -ra inst <<< "${installed}"
+    IFS='.' read -ra base <<< "${baseline}"
+
+    for i in "${!inst[@]}"; do
+        if (( ${inst[$i]} < ${base[$i]:-0} )); then
+            echo "OUTDATED"
+            return
+        elif (( ${inst[$i]} > ${base[$i]:-0} )); then
+            echo "NEWER"
+            return
+        fi
+    done
+    echo "OK"
+}
+
+# ---------------------------------------------------------------------------
+# Check a single VM and write results.
+# ---------------------------------------------------------------------------
+
+check_vm() {
+    local ns="$1" pod="$2" vm="$3" baseline="$4"
+
+    local vm_path="${DRIVER_CHECK_PATH}/vms/${ns}/${vm}"
+    mkdir -p "${vm_path}"
+
+    local drivers
+    drivers=$(get_vm_drivers "${pod}" "${ns}")
+
+    if [[ -z "${drivers}" || "${drivers}" == "[]" ]]; then
+        jq -n --arg vm "${vm}" --arg ns "${ns}" \
+            '{"vm": $vm, "namespace": $ns, "error": "guest agent not responding"}' \
+            > "${vm_path}/report.json"
+        echo "SKIPPED"
+        return
+    fi
+
+    echo "${drivers}" > "${vm_path}/installed-drivers.json"
+
+    local report="[]"
+    local count
+    count=$(echo "${drivers}" | jq 'length')
+
+    for (( i=0; i<count; i++ )); do
+        local name version
+        name=$(echo "${drivers}" | jq -r ".[$i].name")
+        version=$(echo "${drivers}" | jq -r ".[$i].version")
+        local status
+        status=$(compare_versions "${version}" "${baseline}")
+
+        report=$(echo "${report}" | jq \
+            --arg name "${name}" \
+            --arg installed "${version}" \
+            --arg available "${baseline}" \
+            --arg status "${status}" \
+            '. + [{"driver": $name, "installed": $installed, "available": $available, "status": $status}]')
+    done
+
+    jq -n \
+        --arg vm "${vm}" \
+        --arg ns "${ns}" \
+        --arg baseline "${baseline}" \
+        --argjson drivers "${report}" \
+        '{"vm": $vm, "namespace": $ns, "baseline": $baseline, "drivers": $drivers}' \
+        > "${vm_path}/report.json"
+
+    if echo "${report}" | jq -e '[.[] | select(.status == "OUTDATED")] | length > 0' >/dev/null 2>&1; then
+        echo "OUTDATED"
+    else
+        echo "OK"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+echo "========================================"
+echo "VirtIO Driver Version Check"
+echo "========================================"
+
+BASELINE=$(get_baseline)
+if [[ -z "${BASELINE}" ]]; then
+    echo "ERROR: Could not determine baseline driver version. Skipping driver check." >&2
+    jq -n '{"error": "could not determine baseline version"}' > "${DRIVER_CHECK_PATH}/summary.json"
+    exit 0
+fi
+
+echo "Baseline driver version: ${BASELINE}"
+
+total=0
+checked=0
+outdated_count=0
+skipped=0
+
+mapfile -t PODS < <(/usr/bin/oc get pod --all-namespaces \
+    -l kubevirt.io=virt-launcher \
+    --field-selector=status.phase=Running \
+    --no-headers \
+    -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
+    | awk '{print $1 " " $2 " " $3}')
+
+total=${#PODS[@]}
+echo "Found ${total} running VM(s)"
+
+for entry in "${PODS[@]}"; do
+    read -r ns pod vm <<< "${entry}"
+    echo "Checking ${vm} (${ns})..."
+
+    result=$(check_vm "${ns}" "${pod}" "${vm}" "${BASELINE}")
+
+    case "${result}" in
+        OUTDATED) checked=$((checked+1)); outdated_count=$((outdated_count+1)) ;;
+        OK)       checked=$((checked+1)) ;;
+        SKIPPED)  skipped=$((skipped+1)) ;;
+    esac
+done
+
+jq -n \
+    --arg baseline "${BASELINE}" \
+    --argjson total "${total}" \
+    --argjson checked "${checked}" \
+    --argjson outdated "${outdated_count}" \
+    --argjson skipped "${skipped}" \
+    '{"baseline_version": $baseline, "total_vms": $total, "checked": $checked, "outdated": $outdated, "skipped": $skipped}' \
+    > "${DRIVER_CHECK_PATH}/summary.json"
+
+echo "========================================"
+echo "Driver check complete."
+echo "  Checked: ${checked}, Outdated: ${outdated_count}, Skipped: ${skipped}"
+echo "  Results: ${DRIVER_CHECK_PATH}/"
+echo "========================================"
+
+exit 0
