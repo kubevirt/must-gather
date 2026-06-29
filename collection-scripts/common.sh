@@ -45,3 +45,36 @@ get_log_collection_args() {
 	export log_collection_args
 	export node_log_collection_args
 }
+
+query_prometheus() {
+	local query="$1"
+	local time="$2"
+	local token
+	{ set +x; } 2>/dev/null
+	token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+	local result
+	result=$(timeout 20 curl -ksg --connect-timeout 5 --max-time 15 -G \
+		-H "Authorization: Bearer ${token}" \
+		--data-urlencode "query=${query}" \
+		--data-urlencode "time=${time}" \
+		"https://thanos-querier.openshift-monitoring.svc:9091/api/v1/query" 2>/dev/null)
+	echo "${result}"
+	set -x
+}
+
+query_prometheus_range() {
+	local query="$1" start="$2" end="$3" step="${4:-30s}"
+	local token
+	{ set +x; } 2>/dev/null
+	token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+	local result
+	result=$(timeout 35 curl -ksg --connect-timeout 5 --max-time 30 -G \
+		-H "Authorization: Bearer ${token}" \
+		--data-urlencode "query=${query}" \
+		--data-urlencode "start=${start}" \
+		--data-urlencode "end=${end}" \
+		--data-urlencode "step=${step}" \
+		"https://thanos-querier.openshift-monitoring.svc:9091/api/v1/query_range" 2>/dev/null)
+	echo "${result}"
+	set -x
+}

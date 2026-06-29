@@ -1,0 +1,726 @@
+#!/bin/bash -x
+
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${DIR_NAME}/common.sh"
+check_command
+"${DIR_NAME}"/version
+
+INCIDENT_TIMEOUT=${INCIDENT_TIMEOUT:-600}
+START_TIME=$(date +%s)
+
+echo "========================================"
+echo "VM Incident Collection"
+echo "========================================"
+echo "Collecting only data pertinent to this"
+echo "incident: right VM, right node, right"
+echo "time window. No cluster-wide noise."
+echo "========================================"
+echo "Namespace:     ${NS}"
+echo "VM:            ${VM}"
+echo "Incident time: ${INCIDENT_TIME}"
+echo "Timeout:       ${INCIDENT_TIMEOUT}s"
+echo "========================================"
+
+incident_epoch=$(date -d "${INCIDENT_TIME}" +%s 2>/dev/null)
+if [[ -z "${incident_epoch}" ]]; then
+    echo "ERROR: Failed to parse --incident-time='${INCIDENT_TIME}'. Use RFC3339 format (e.g. 2026-06-06T06:06:00Z)" >&2
+    exit 1
+fi
+
+since_epoch=$((incident_epoch - 86400))
+until_epoch=$((incident_epoch + 7200))
+SINCE_TIME=$(date -u -d "@${since_epoch}" +"%Y-%m-%dT%H:%M:%SZ")
+UNTIL_TIME=$(date -u -d "@${until_epoch}" +"%Y-%m-%dT%H:%M:%SZ")
+SINCE_NODE_LOGS=$(date -u -d "@${since_epoch}" +"%Y-%m-%d %H:%M:%S")
+
+echo "Collection window: ${SINCE_TIME} to ${UNTIL_TIME}"
+
+# Track what was collected/skipped for the incident summary
+NODE_DISCOVERY_METHOD=""
+COLLECTED_ITEMS=()
+SKIPPED_ITEMS=()
+
+collected() { COLLECTED_ITEMS+=("$1"); }
+skipped() { SKIPPED_ITEMS+=("$1"); }
+
+check_timeout() {
+    local elapsed=$(( $(date +%s) - START_TIME ))
+    if [[ ${elapsed} -ge ${INCIDENT_TIMEOUT} ]]; then
+        echo "WARNING: Timeout reached (${INCIDENT_TIMEOUT}s). Collection may be incomplete."
+        return 1
+    fi
+    return 0
+}
+
+collect_incident_metrics() {
+    local metrics_conf="${DIR_NAME}/incident_metrics.conf"
+    if [[ ! -f "${metrics_conf}" ]]; then
+        skipped "incident metrics (configuration file not found)"
+        echo "  WARNING: ${metrics_conf} not found, skipping metrics collection."
+        return
+    fi
+
+    local metrics_dir="${BASE_COLLECTION_PATH}/incident-metrics"
+    mkdir -p "${metrics_dir}"
+    cp "${metrics_conf}" "${metrics_dir}/incident_metrics.conf"
+    local metrics_file="${metrics_dir}/incident-metrics.txt"
+    local metadata_file="${metrics_dir}/metrics-metadata.json"
+
+    local metrics_collected=()
+    local metrics_skipped=()
+    local total=0
+    local ok=0
+
+    { set +x; } 2>/dev/null
+    while IFS='|' read -r category slug template description; do
+        [[ "${category}" =~ ^#.*$ || -z "${category}" ]] && continue
+        total=$(( total + 1 ))
+
+        local query="${template}"
+        query="${query//\$VM/${VM}}"
+        query="${query//\$NS/${NS}}"
+        query="${query//\$NODE/${INCIDENT_NODE}}"
+
+        check_timeout || break
+
+        echo "    Querying: ${category}/${slug}"
+        local response
+        response=$(query_prometheus_range "${query}" "${since_epoch}" "${until_epoch}" "30s" 2>/dev/null)
+
+        local status
+        status=$(echo "${response}" | jq -r '.status // empty' 2>/dev/null)
+        local result_count
+        result_count=$(echo "${response}" | jq '.data.result | length' 2>/dev/null)
+
+        if [[ "${status}" != "success" || -z "${result_count}" || "${result_count}" == "0" ]]; then
+            metrics_skipped+=("{\"slug\":\"${slug}\",\"category\":\"${category}\",\"reason\":\"no data or query failed\"}")
+            echo "    Skipped: ${category}/${slug} (no data available)"
+            continue
+        fi
+
+        if echo "${response}" | jq -r --arg slug "${slug}" --arg desc "${description}" '
+            "# HELP " + $slug + " " + $desc,
+            "# TYPE " + $slug + " gauge",
+            (
+                .data.result[] |
+                .metric as $m |
+                ($m | to_entries | map(.key + "=\"" + .value + "\"") | join(",")) as $labels |
+                .values[] |
+                $slug + "{" + $labels + "} " + .[1] + " " + (.[0] | tostring)
+            )
+        ' >> "${metrics_file}" 2>/dev/null; then
+            ok=$(( ok + 1 ))
+            metrics_collected+=("{\"slug\":\"${slug}\",\"category\":\"${category}\"}")
+            echo "    Collected: ${category}/${slug} (${result_count} series)"
+        else
+            metrics_skipped+=("{\"slug\":\"${slug}\",\"category\":\"${category}\",\"reason\":\"conversion failed\"}")
+            echo "    Skipped: ${category}/${slug} (OpenMetrics conversion failed)"
+        fi
+    done < "${metrics_conf}"
+
+    if [[ -f "${metrics_file}" ]]; then
+        echo "# EOF" >> "${metrics_file}"
+        collected "incident metrics: ${ok}/${total} metrics in OpenMetrics format"
+    else
+        skipped "incident metrics (no metrics data available from Prometheus)"
+    fi
+
+    {
+        echo "{"
+        echo "  \"time_window\": {\"start\": \"${SINCE_TIME}\", \"end\": \"${UNTIL_TIME}\"},"
+        echo "  \"step\": \"30s\","
+        echo "  \"node\": \"${INCIDENT_NODE}\","
+        echo "  \"vm\": \"${VM}\","
+        echo "  \"namespace\": \"${NS}\","
+        echo "  \"total\": ${total},"
+        echo "  \"collected\": ${ok},"
+        printf "  \"collected_metrics\": [%s],\n" "$(IFS=,; echo "${metrics_collected[*]}")"
+        printf "  \"skipped_metrics\": [%s]\n" "$(IFS=,; echo "${metrics_skipped[*]}")"
+        echo "}"
+    } > "${metadata_file}"
+    set -x
+}
+
+# --- Node Discovery via PromQL ---
+echo "Discovering node for VM ${VM} in namespace ${NS} at incident time..."
+
+INCIDENT_NODE=""
+promql_query="last_over_time(kubevirt_vmi_info{name=\"${VM}\", namespace=\"${NS}\", phase=\"running\"}[24h])"
+{ set +x; } 2>/dev/null
+echo "  PromQL: ${promql_query} @ ${incident_epoch}"
+prom_response=$(query_prometheus "${promql_query}" "${incident_epoch}")
+prom_status=$(echo "${prom_response}" | jq -r '.status // empty' 2>/dev/null)
+
+if [[ "${prom_status}" == "success" ]]; then
+    INCIDENT_NODE=$(echo "${prom_response}" | jq -r '.data.result[0].metric.node // empty' 2>/dev/null)
+fi
+set -x
+
+if [[ -n "${INCIDENT_NODE}" ]]; then
+    echo "Node identified from metrics: ${INCIDENT_NODE}"
+    NODE_DISCOVERY_METHOD="promql"
+else
+    echo "WARNING: Could not determine node from Prometheus metrics."
+    echo "Falling back to current VMI status.nodeName..."
+    INCIDENT_NODE=$(timeout 30 /usr/bin/oc get vmi "${VM}" -n "${NS}" -o jsonpath='{.status.nodeName}' 2>/dev/null)
+    if [[ -n "${INCIDENT_NODE}" ]]; then
+        echo "WARNING: Using current node '${INCIDENT_NODE}' - VM may have moved since the incident."
+        NODE_DISCOVERY_METHOD="vmi-fallback (VM may have moved since incident)"
+    else
+        echo "ERROR: Could not determine node for VM ${VM}. VMI may not exist." >&2
+        exit 1
+    fi
+fi
+
+# --- Collect Host Data ---
+# Write to nodes/<node>/ to match gather_nodes output structure (omc-compatible)
+NODE_PATH="${BASE_COLLECTION_PATH}/nodes/${INCIDENT_NODE}"
+mkdir -p "${NODE_PATH}"
+
+MANIFEST_PATH=${MANIFEST_PATH:-"/etc"}
+CRD_MANIFEST="${MANIFEST_PATH}/node-gather-crd.yaml"
+DAEMONSET_MANIFEST="${MANIFEST_PATH}/node-gather-ds.yaml"
+
+if [[ -z ${MUST_GATHER_IMAGE} ]]; then
+    MG_NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+    MUST_GATHER_IMAGE=${MUST_GATHER_IMAGE:-$(timeout 30 /usr/bin/oc get pod -n "$MG_NAMESPACE" "$POD_NAME" -o jsonpath="{.spec.containers[0].image}" 2>/dev/null)}
+fi
+
+cleanup_node_gather() {
+    echo "Cleaning up node-gather resources..."
+    timeout 30 /usr/bin/oc delete -f "${DAEMONSET_MANIFEST}" 2>/dev/null
+    timeout 30 /usr/bin/oc delete -f "${CRD_MANIFEST}" 2>/dev/null
+}
+
+NODE_GATHER_POD=""
+if [[ -z "${MUST_GATHER_IMAGE}" ]]; then
+    echo "WARNING: Could not determine must-gather image. Skipping node-gather pod deployment."
+else
+    echo "Deploying node-gather pod on ${INCIDENT_NODE}..."
+    timeout 30 /usr/bin/oc apply -f "${CRD_MANIFEST}"
+    timeout 30 /usr/bin/oc adm policy add-scc-to-user privileged -n node-gather -z node-gather
+
+    # Deploy DaemonSet with nodeSelector targeting only the incident node
+    sed -e "s#MUST_GATHER_IMAGE#${MUST_GATHER_IMAGE}#" "${DAEMONSET_MANIFEST}" \
+        | sed "/containers:/i\\      nodeSelector:\\n        kubernetes.io/hostname: ${INCIDENT_NODE}" \
+        | timeout 30 /usr/bin/oc apply -f -
+
+    trap cleanup_node_gather EXIT
+
+    COUNTER=0
+    { set +x; } 2>/dev/null
+    until timeout 10 /usr/bin/oc get pod -n node-gather --field-selector="status.phase=Running,spec.nodeName=${INCIDENT_NODE}" --no-headers 2>/dev/null | grep -q .; do
+        if [[ $COUNTER -ge 120 ]]; then
+            echo "WARNING: Timed out waiting for node-gather pod on ${INCIDENT_NODE}."
+            break
+        fi
+        if [[ $(( COUNTER % 20 )) == 0 ]]; then
+            echo "  Waiting for node-gather pod to be ready on ${INCIDENT_NODE}..."
+        fi
+        (( COUNTER++ ))
+        sleep 1
+    done
+    set -x
+
+    NODE_GATHER_POD=$(timeout 30 /usr/bin/oc get pod -n node-gather --field-selector="status.phase=Running,spec.nodeName=${INCIDENT_NODE}" \
+        --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null | head -1)
+fi
+
+# Start journal-based log collection in parallel (via Kubelet API, no pod needed)
+echo "Collecting host data from node ${INCIDENT_NODE}..."
+
+check_timeout || exit 0
+
+collected "journal, kubelet logs, node definition (via oc adm node-logs/inspect)"
+echo "  Collecting journal..."
+timeout 120 /usr/bin/oc adm node-logs "${INCIDENT_NODE}" --since="${SINCE_NODE_LOGS}" \
+    > "${NODE_PATH}/${INCIDENT_NODE}_logs_journal" 2>&1 &
+
+echo "  Collecting kubelet logs..."
+timeout 120 /usr/bin/oc adm node-logs "${INCIDENT_NODE}" -u kubelet --since="${SINCE_NODE_LOGS}" \
+    > "${NODE_PATH}/${INCIDENT_NODE}_logs_kubelet" 2>&1 &
+
+echo "  Collecting node definition..."
+timeout 120 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" node/"${INCIDENT_NODE}" 2>&1 &
+
+# Collect data via node-gather pod (privileged host access).
+# Uses nsenter to access host binaries (the daemonset mounts individual dirs, not the full root,
+# so chroot /host cannot find binaries under /usr).
+# The pod has hostNetwork:true so ip/ss can run directly for network info.
+# Exec calls are batched (max 5 concurrent) to avoid overwhelming kubelet streaming limits.
+NODE_GATHER_FILES=(dmesg dmidecode lspci cmdline mountstats diskstats pressure_io pressure_memory pressure_cpu df mounts sysctl nfs_module_params tuned_active_profile tuned_modprobe nfs.conf nfs_modprobe chrony ip_addr kernel_red_flags.log)
+if [[ -n "${NODE_GATHER_POD}" ]]; then
+    exec_pids=()
+
+    echo "  Collecting dmesg..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- dmesg 2>/dev/null \
+        > "${NODE_PATH}/dmesg" & exec_pids+=($!)
+
+    echo "  Collecting dmidecode (CPU microcode, BIOS, hardware)..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- dmidecode 2>/dev/null \
+        > "${NODE_PATH}/dmidecode" & exec_pids+=($!)
+
+    echo "  Collecting PCI devices (passthrough, IOMMU, firmware)..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- lspci -vv 2>/dev/null \
+        > "${NODE_PATH}/lspci" & exec_pids+=($!)
+
+    echo "  Collecting kernel boot parameters..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/cmdline 2>/dev/null \
+        > "${NODE_PATH}/cmdline" & exec_pids+=($!)
+
+    echo "  Collecting mount info..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/self/mountstats 2>/dev/null \
+        > "${NODE_PATH}/mountstats" & exec_pids+=($!)
+
+    echo "  Collecting disk stats..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/diskstats 2>/dev/null \
+        > "${NODE_PATH}/diskstats" & exec_pids+=($!)
+
+    echo "  Collecting I/O pressure..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/io 2>/dev/null \
+        > "${NODE_PATH}/pressure_io" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+    exec_pids=()
+
+    echo "  Collecting memory pressure..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/memory 2>/dev/null \
+        > "${NODE_PATH}/pressure_memory" & exec_pids+=($!)
+
+    echo "  Collecting CPU pressure..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/cpu 2>/dev/null \
+        > "${NODE_PATH}/pressure_cpu" & exec_pids+=($!)
+
+    echo "  Collecting filesystem usage..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- df -h 2>/dev/null \
+        > "${NODE_PATH}/df" & exec_pids+=($!)
+
+    echo "  Collecting mount table..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/mounts 2>/dev/null \
+        > "${NODE_PATH}/mounts" & exec_pids+=($!)
+
+    echo "  Collecting kernel tunables (sysctl)..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- sysctl -a 2>/dev/null \
+        > "${NODE_PATH}/sysctl" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+    exec_pids=()
+
+    echo "  Collecting NFS module parameters..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'for f in /host/sys/module/nfs/parameters/*; do echo "$(basename "$f") = $(cat "$f" 2>/dev/null)"; done; for f in /host/sys/module/nfsd/parameters/* 2>/dev/null; do echo "nfsd/$(basename "$f") = $(cat "$f" 2>/dev/null)"; done' 2>/dev/null \
+        > "${NODE_PATH}/nfs_module_params" & exec_pids+=($!)
+
+    echo "  Collecting tuned profile..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- tuned-adm active 2>/dev/null \
+        > "${NODE_PATH}/tuned_active_profile" & exec_pids+=($!)
+
+    echo "  Collecting tuned modprobe config..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/etc/modprobe.d/tuned.conf 2>/dev/null \
+        > "${NODE_PATH}/tuned_modprobe" & exec_pids+=($!)
+
+    echo "  Collecting NFS client config..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/etc/nfs.conf 2>/dev/null \
+        > "${NODE_PATH}/nfs.conf" & exec_pids+=($!)
+
+    echo "  Collecting NFS modprobe config..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'for f in /host/etc/modprobe.d/*.conf; do [ -f "$f" ] || continue; echo "=== $(basename "$f") ==="; cat "$f"; done' 2>/dev/null \
+        > "${NODE_PATH}/nfs_modprobe" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+    exec_pids=()
+
+    echo "  Collecting time synchronization (chrony)..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- chronyc -m sources tracking 2>/dev/null \
+        > "${NODE_PATH}/chrony" & exec_pids+=($!)
+
+    echo "  Collecting IP configuration..."
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- ip a 2>/dev/null \
+        > "${NODE_PATH}/ip_addr" & exec_pids+=($!)
+
+    echo "  Scanning kernel logs for red-flag indicators..."
+    timeout 120 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'nsenter --mount=/host/proc/1/ns/mnt -- journalctl -k --no-pager -S -7d 2>/dev/null | grep -iE "nfs:|NFS |nfs |qemu|QEMU|Out of memory|oom-kill|Killed process.*qemu|task .* blocked|blocked for more than|stuck for" || true' \
+        > "${NODE_PATH}/kernel_red_flags.log" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+else
+    skipped "dmidecode, mountstats, diskstats, pressure (cpu/io/memory), df, mounts, sysctl, tuned, nfs config, chrony, ip, kernel red-flags (node-gather pod not available)"
+    collected "dmesg (via oc adm node-logs fallback)"
+    echo "  WARNING: node-gather pod not available, falling back to oc adm node-logs for dmesg."
+    timeout 120 /usr/bin/oc adm node-logs "${INCIDENT_NODE}" -u kernel --since="${SINCE_NODE_LOGS}" \
+        > "${NODE_PATH}/dmesg" 2>&1 &
+fi
+
+wait
+
+# Clean up node-gather (runs now, disarm the EXIT trap)
+cleanup_node_gather
+trap - EXIT
+
+# Remove empty node-gather files and report what was actually collected
+if [[ -n "${NODE_GATHER_POD}" ]]; then
+    # Add sentinel to kernel_red_flags.log if empty (no matches is meaningful, not an error)
+    if [[ -f "${NODE_PATH}/kernel_red_flags.log" ]] && ! [[ -s "${NODE_PATH}/kernel_red_flags.log" ]]; then
+        echo "# No kernel red-flag patterns found in the last 7 days" > "${NODE_PATH}/kernel_red_flags.log"
+    fi
+
+    local_collected=()
+    local_skipped=()
+    for f in "${NODE_GATHER_FILES[@]}"; do
+        if [[ -s "${NODE_PATH}/${f}" ]]; then
+            local_collected+=("${f}")
+        else
+            rm -f "${NODE_PATH}/${f}"
+            local_skipped+=("${f}")
+        fi
+    done
+    if [[ ${#local_collected[@]} -gt 0 ]]; then
+        collected "$(IFS=', '; echo "${local_collected[*]}") (via node-gather pod)"
+    fi
+    if [[ ${#local_skipped[@]} -gt 0 ]]; then
+        skipped "$(IFS=', '; echo "${local_skipped[*]}") (not available on this host)"
+    fi
+fi
+
+# --- Cluster Health Snapshot ---
+echo "Collecting cluster health snapshot..."
+
+check_timeout || exit 0
+
+CLUSTER_PATH="${BASE_COLLECTION_PATH}/cluster-scoped-resources"
+mkdir -p "${CLUSTER_PATH}"
+
+collected "cluster health: ClusterOperators, nodes overview, MachineConfigPools, top node, KubeVirt version, VMIs on incident node"
+timeout 30 /usr/bin/oc get clusteroperators > "${CLUSTER_PATH}/cluster_operators" 2>&1 &
+timeout 30 /usr/bin/oc get nodes -o wide > "${CLUSTER_PATH}/nodes_overview" 2>&1 &
+timeout 30 /usr/bin/oc get mcp > "${CLUSTER_PATH}/machineconfigpools" 2>&1 &
+timeout 30 /usr/bin/oc adm top node "${INCIDENT_NODE}" > "${CLUSTER_PATH}/top_node" 2>&1 &
+timeout 30 /usr/bin/oc get kubevirt -A -o jsonpath='{range .items[*]}namespace: {.metadata.namespace}{"\n"}targetVersion: {.status.targetKubeVirtVersion}{"\n"}observedVersion: {.status.observedKubeVirtVersion}{"\n"}phase: {.status.phase}{"\n"}{end}' \
+    > "${CLUSTER_PATH}/kubevirt_version" 2>&1 &
+# Query Prometheus for VMIs on the incident node at incident time (field selector not supported by KubeVirt API)
+{ set +x; } 2>/dev/null
+echo "  Querying Prometheus for VMIs on ${INCIDENT_NODE} at incident time..."
+vmi_response=$(query_prometheus "last_over_time(kubevirt_vmi_info{node=\"${INCIDENT_NODE}\"}[24h])" "${incident_epoch}")
+vmi_status=$(echo "${vmi_response}" | jq -r '.status // empty' 2>/dev/null)
+if [[ "${vmi_status}" == "success" ]]; then
+    echo "${vmi_response}" | jq -r '
+        ["NAMESPACE", "NAME", "PHASE", "NODE"],
+        (.data.result[] | .metric | [.namespace, .name, .phase, .node])
+        | @tsv' > "${CLUSTER_PATH}/vmis_on_incident_node" 2>/dev/null
+    vmi_count=$(echo "${vmi_response}" | jq '.data.result | length' 2>/dev/null)
+    echo "  Found ${vmi_count:-0} VMI(s) on node at incident time"
+else
+    echo "  WARNING: Could not query VMIs from Prometheus, falling back to current state"
+    timeout 30 /usr/bin/oc get vmi -A -o json 2>/dev/null \
+        | jq -r --arg node "${INCIDENT_NODE}" '
+            ["NAMESPACE", "NAME", "PHASE", "NODE"],
+            (.items[] | select(.status.nodeName == $node) | [.metadata.namespace, .metadata.name, .status.phase, .status.nodeName])
+            | @tsv' > "${CLUSTER_PATH}/vmis_on_incident_node" 2>/dev/null
+fi
+set -x
+wait
+
+# --- Collect VM Data ---
+# Use oc adm inspect to write to standard paths (omc-compatible)
+echo "Collecting VM data..."
+
+check_timeout || exit 0
+
+collected "VM and VMI definitions (via oc adm inspect)"
+timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${NS}" \
+    virtualmachines/"${VM}" 2>&1
+
+timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${NS}" \
+    virtualmachineinstances/"${VM}" 2>&1
+
+# --- Collect Storage Chain ---
+echo "Collecting storage data for VM ${VM}..."
+
+check_timeout || exit 0
+
+# Collect PVCs used by the VM's virt-launcher pod (or from the VM spec)
+{ set +x; } 2>/dev/null
+VM_PVCS=$(timeout 30 /usr/bin/oc get vm "${VM}" -n "${NS}" --request-timeout=30s -o jsonpath='{range .spec.template.spec.volumes[*]}{.persistentVolumeClaim.claimName}{"\n"}{.dataVolume.name}{"\n"}{end}' 2>/dev/null | grep -v '^$' | sort -u)
+set -x
+
+collected "storage chain: PVCs, PVs, StorageClasses, DataVolumes, VolumeAttachments, namespace events"
+if [[ -n "${VM_PVCS}" ]]; then
+    while read -r pvc_name; do
+        echo "  Collecting PVC ${pvc_name}..."
+        timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${NS}" \
+            persistentvolumeclaims/"${pvc_name}" 2>&1
+
+        pv_name=$(timeout 30 /usr/bin/oc get pvc "${pvc_name}" -n "${NS}" --request-timeout=30s -o jsonpath='{.spec.volumeName}' 2>/dev/null)
+        if [[ -n "${pv_name}" ]]; then
+            echo "  Collecting PV ${pv_name}..."
+            timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" \
+                persistentvolumes/"${pv_name}" 2>&1
+
+            sc_name=$(timeout 30 /usr/bin/oc get pv "${pv_name}" --request-timeout=30s -o jsonpath='{.spec.storageClassName}' 2>/dev/null)
+            if [[ -n "${sc_name}" ]]; then
+                echo "  Collecting StorageClass ${sc_name}..."
+                timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" \
+                    storageclasses/"${sc_name}" 2>&1
+            fi
+        fi
+    done <<< "${VM_PVCS}"
+else
+    echo "  No PVCs found for VM ${VM}."
+fi
+
+# Collect VolumeAttachments for the incident node
+echo "  Collecting VolumeAttachments for node ${INCIDENT_NODE}..."
+{ set +x; } 2>/dev/null
+VA_NAMES=$(timeout 30 /usr/bin/oc get volumeattachments --request-timeout=30s -o jsonpath="{range .items[?(@.spec.nodeName==\"${INCIDENT_NODE}\")]}{.metadata.name}{'\n'}{end}" 2>/dev/null)
+set -x
+if [[ -n "${VA_NAMES}" ]]; then
+    while read -r va_name; do
+        timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" \
+            volumeattachments/"${va_name}" 2>&1
+    done <<< "${VA_NAMES}"
+fi
+
+# Collect DataVolumes for the VM (tracks import/clone status and conditions)
+{ set +x; } 2>/dev/null
+DV_NAMES=$(timeout 30 /usr/bin/oc get vm "${VM}" -n "${NS}" --request-timeout=30s -o jsonpath='{range .spec.template.spec.volumes[*]}{.dataVolume.name}{"\n"}{end}' 2>/dev/null | grep -v '^$' | sort -u)
+set -x
+if [[ -n "${DV_NAMES}" ]]; then
+    echo "  Collecting DataVolumes..."
+    while read -r dv_name; do
+        timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${NS}" \
+            datavolumes/"${dv_name}" 2>&1
+    done <<< "${DV_NAMES}"
+fi
+
+# Collect namespace events (FailedAttach, FailedMount, etc.)
+echo "  Collecting namespace events..."
+mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${NS}"
+timeout 30 /usr/bin/oc get events -n "${NS}" --request-timeout=30s --sort-by='.lastTimestamp' \
+    > "${BASE_COLLECTION_PATH}/namespaces/${NS}/events" 2>&1
+
+# --- Collect Incident Metrics ---
+echo "Collecting performance metrics from Prometheus..."
+
+check_timeout || exit 0
+
+collect_incident_metrics
+
+# --- Collect Pod Logs ---
+echo "Collecting pod logs..."
+
+check_timeout || exit 0
+
+# virt-launcher pod for this VM
+# kubevirt.io/domain is an annotation, not a label — filter with awk after listing
+LAUNCHER_POD=$(timeout 30 /usr/bin/oc get pod -n "${NS}" -l "kubevirt.io=virt-launcher" \
+    --no-headers -o custom-columns="NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" 2>/dev/null \
+    | awk -v vm="${VM}" '$2 == vm {print $1; exit}')
+
+if [[ -n "${LAUNCHER_POD}" ]]; then
+    collected "virt-launcher pod logs and previous container logs (pod: ${LAUNCHER_POD})"
+    echo "  Collecting virt-launcher pod (${LAUNCHER_POD})..."
+    timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${NS}" \
+        --since-time="${SINCE_TIME}" pod/"${LAUNCHER_POD}" 2>&1
+
+    echo "  Collecting virt-launcher container logs..."
+    LAUNCHER_LOG_PATH="${BASE_COLLECTION_PATH}/namespaces/${NS}/core/pods/${LAUNCHER_POD}"
+    mkdir -p "${LAUNCHER_LOG_PATH}"
+    for container in $(timeout 30 /usr/bin/oc get pod "${LAUNCHER_POD}" -n "${NS}" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null); do
+        timeout 60 /usr/bin/oc logs "${LAUNCHER_POD}" -n "${NS}" -c "${container}" --since-time="${SINCE_TIME}" 2>/dev/null \
+            > "${LAUNCHER_LOG_PATH}/${container}-current.log"
+        [[ -s "${LAUNCHER_LOG_PATH}/${container}-current.log" ]] || rm -f "${LAUNCHER_LOG_PATH}/${container}-current.log"
+
+        timeout 60 /usr/bin/oc logs "${LAUNCHER_POD}" -n "${NS}" -c "${container}" --previous 2>/dev/null \
+            > "${LAUNCHER_LOG_PATH}/${container}-previous.log"
+        [[ -s "${LAUNCHER_LOG_PATH}/${container}-previous.log" ]] || rm -f "${LAUNCHER_LOG_PATH}/${container}-previous.log"
+    done
+    rmdir "${LAUNCHER_LOG_PATH}" 2>/dev/null
+
+    # Check if this pod predates the incident (VM hasn't restarted since the BSOD)
+    pod_start=$(timeout 30 /usr/bin/oc get pod "${LAUNCHER_POD}" -n "${NS}" -o jsonpath='{.status.startTime}' 2>/dev/null)
+    pod_start_epoch=$(date -d "${pod_start}" +%s 2>/dev/null)
+    if [[ -n "${pod_start_epoch}" ]] && [[ ${pod_start_epoch} -lt ${incident_epoch} ]]; then
+        collected "virsh dumpxml, domblklist, domjobinfo, domstats, domblkerror, list, serial console, QEMU logs, cgroup stats (VM has not restarted)"
+        echo "  Pod predates incident - VM has not restarted. Collecting live VM state..."
+        # Write virsh data to namespaces/<ns>/vms/<vm>/ to match gather_vms_details structure
+        VM_DETAIL_PATH="${BASE_COLLECTION_PATH}/namespaces/${NS}/vms/${VM}"
+        mkdir -p "${VM_DETAIL_PATH}"
+
+        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r dumpxml "${NS}_${VM}" \
+            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.dumpxml.xml" 2>&1
+
+        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domblklist "${NS}_${VM}" \
+            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domblklist" 2>&1
+
+        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domjobinfo "${NS}_${VM}" \
+            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domjobinfo" 2>&1
+
+        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r list --all \
+            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.list" 2>&1
+
+        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domstats "${NS}_${VM}" \
+            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domstats" 2>&1
+
+        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domblkerror "${NS}_${VM}" \
+            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domblkerror" 2>&1
+
+        timeout 60 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- \
+            tar --ignore-failed-read -cf - \
+            "/var/log/libvirt/qemu/" \
+            "/var/run/libvirt/qemu/log/" \
+            "/var/run/kubevirt-private/libvirt/qemu/log/" 2>/dev/null \
+            | tar -C "${VM_DETAIL_PATH}" \
+                --transform 'flags=r;s|^var/log/libvirt/qemu/||' \
+                --transform 'flags=r;s|^var/run/libvirt/qemu/log/|runlog_|' \
+                --transform 'flags=r;s|^var/run/kubevirt-private/libvirt/qemu/log/|private_|' \
+                -xf - 2>/dev/null
+
+        # Collect guest serial console log (contains kernel panic / BSOD output)
+        # The on-disk directory uses the VMI UID (metadata.uid), not the libvirt domain UUID
+        VMI_UID=$(timeout 30 /usr/bin/oc get vmi "${VM}" -n "${NS}" -o jsonpath='{.metadata.uid}' 2>/dev/null)
+        if [[ -n "${VMI_UID}" ]]; then
+            echo "  Collecting serial console log..."
+            timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- \
+                cat "/var/run/kubevirt-private/${VMI_UID}/virt-serial0-log" 2>/dev/null \
+                > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.serial-console.log"
+            [[ -s "${VM_DETAIL_PATH}/${LAUNCHER_POD}.serial-console.log" ]] || \
+                rm -f "${VM_DETAIL_PATH}/${LAUNCHER_POD}.serial-console.log"
+        fi
+
+        # Collect QEMU process resource usage (cgroup limits, OOM proximity)
+        QEMU_PID=$(timeout 10 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- \
+            pgrep -f 'qemu-kvm' 2>/dev/null | head -1)
+        if [[ -n "${QEMU_PID}" ]]; then
+            echo "  Collecting QEMU process cgroup stats..."
+            timeout 15 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- \
+                cat "/proc/${QEMU_PID}/status" 2>/dev/null \
+                > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.qemu-proc-status"
+            timeout 15 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- \
+                /bin/bash -c "CGRP=\$(head -1 /proc/${QEMU_PID}/cgroup | cut -d: -f3)
+                    echo '=== cgroup path ==='
+                    echo \"\${CGRP}\"
+                    echo '=== memory.current ==='
+                    cat /sys/fs/cgroup\${CGRP}/memory.current 2>/dev/null
+                    echo '=== memory.max ==='
+                    cat /sys/fs/cgroup\${CGRP}/memory.max 2>/dev/null
+                    echo '=== memory.events ==='
+                    cat /sys/fs/cgroup\${CGRP}/memory.events 2>/dev/null
+                    echo '=== cpu.stat ==='
+                    cat /sys/fs/cgroup\${CGRP}/cpu.stat 2>/dev/null
+                    echo '=== cpu.max ==='
+                    cat /sys/fs/cgroup\${CGRP}/cpu.max 2>/dev/null" \
+                > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.qemu-cgroup-stats" 2>&1
+            for f in qemu-proc-status qemu-cgroup-stats; do
+                [[ -s "${VM_DETAIL_PATH}/${LAUNCHER_POD}.${f}" ]] || rm -f "${VM_DETAIL_PATH}/${LAUNCHER_POD}.${f}"
+            done
+        fi
+    else
+        skipped "virsh/QEMU data (VM restarted after incident - data would reflect new instance)"
+        echo "  Pod started after incident - VM has restarted. Skipping virsh/QEMU data (would reflect new instance)."
+    fi
+else
+    skipped "virt-launcher current pod logs (no running pod found)"
+    echo "  WARNING: No running virt-launcher pod found for VM ${VM}."
+    TERMINATED_PODS=$(timeout 30 /usr/bin/oc get pod -n "${NS}" -l "kubevirt.io=virt-launcher" \
+        --no-headers -o custom-columns="NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" 2>/dev/null \
+        | awk -v vm="${VM}" '$2 == vm {print $1}')
+    if [[ -n "${TERMINATED_PODS}" ]]; then
+        echo "  Found terminated pod(s), collecting via inspect..."
+        echo "${TERMINATED_PODS}" | while read -r pod_name; do
+            timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${NS}" \
+                --since-time="${SINCE_TIME}" pod/"${pod_name}" 2>&1
+        done
+    fi
+fi
+
+# virt-handler pod on the incident node
+HANDLER_POD=$(timeout 30 /usr/bin/oc get pod -A -l "kubevirt.io=virt-handler" \
+    --field-selector "spec.nodeName=${INCIDENT_NODE}" \
+    --no-headers -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name" 2>/dev/null | head -1)
+
+if [[ -n "${HANDLER_POD}" ]]; then
+    handler_ns=$(echo "${HANDLER_POD}" | awk '{print $1}')
+    handler_name=$(echo "${HANDLER_POD}" | awk '{print $2}')
+    collected "virt-handler pod logs and previous container logs (pod: ${handler_name})"
+    echo "  Collecting virt-handler pod (${handler_name})..."
+    timeout 60 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" -n "${handler_ns}" \
+        --since-time="${SINCE_TIME}" pod/"${handler_name}" 2>&1
+
+    echo "  Collecting virt-handler container logs..."
+    HANDLER_LOG_PATH="${BASE_COLLECTION_PATH}/namespaces/${handler_ns}/core/pods/${handler_name}"
+    mkdir -p "${HANDLER_LOG_PATH}"
+    for container in $(timeout 30 /usr/bin/oc get pod "${handler_name}" -n "${handler_ns}" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null); do
+        timeout 60 /usr/bin/oc logs "${handler_name}" -n "${handler_ns}" -c "${container}" --since-time="${SINCE_TIME}" 2>/dev/null \
+            > "${HANDLER_LOG_PATH}/${container}-current.log"
+        [[ -s "${HANDLER_LOG_PATH}/${container}-current.log" ]] || rm -f "${HANDLER_LOG_PATH}/${container}-current.log"
+
+        timeout 60 /usr/bin/oc logs "${handler_name}" -n "${handler_ns}" -c "${container}" --previous 2>/dev/null \
+            > "${HANDLER_LOG_PATH}/${container}-previous.log"
+        [[ -s "${HANDLER_LOG_PATH}/${container}-previous.log" ]] || rm -f "${HANDLER_LOG_PATH}/${container}-previous.log"
+    done
+    rmdir "${HANDLER_LOG_PATH}" 2>/dev/null
+else
+    skipped "virt-handler pod logs (no virt-handler pod found on node ${INCIDENT_NODE})"
+    echo "  WARNING: No virt-handler pod found on node ${INCIDENT_NODE}."
+fi
+
+# --- Write Incident Summary Manifest ---
+ELAPSED=$(( $(date +%s) - START_TIME ))
+
+{ set +x; } 2>/dev/null
+{
+    echo "incident:"
+    echo "  namespace: ${NS}"
+    echo "  vm: ${VM}"
+    echo "  incident_time: ${INCIDENT_TIME}"
+    echo "  collection_window:"
+    echo "    since: ${SINCE_TIME}"
+    echo "    until: ${UNTIL_TIME}"
+    echo "  node:"
+    echo "    name: ${INCIDENT_NODE}"
+    echo "    discovery_method: ${NODE_DISCOVERY_METHOD}"
+    echo "  elapsed_seconds: ${ELAPSED}"
+    echo "  collected:"
+    for item in "${COLLECTED_ITEMS[@]}"; do
+        echo "    - ${item}"
+    done
+    echo "  skipped:"
+    if [[ ${#SKIPPED_ITEMS[@]} -eq 0 ]]; then
+        echo "    []"
+    else
+        for item in "${SKIPPED_ITEMS[@]}"; do
+            echo "    - ${item}"
+        done
+    fi
+} > "${BASE_COLLECTION_PATH}/incident-summary.yaml"
+set -x
+
+# --- Summary ---
+echo ""
+echo "========================================"
+echo "VM Incident Collection Complete"
+echo "========================================"
+echo "Elapsed time: ${ELAPSED}s"
+echo "Incident node: ${INCIDENT_NODE}"
+echo ""
+echo "Collected data locations:"
+echo "  Node logs:      nodes/${INCIDENT_NODE}/"
+echo "  Node hardware:  nodes/${INCIDENT_NODE}/{dmidecode,lspci,cmdline}"
+echo "  Node storage:   nodes/${INCIDENT_NODE}/{mountstats,diskstats,pressure_*,df,mounts}"
+echo "  Node tunables:  nodes/${INCIDENT_NODE}/{sysctl,nfs_module_params,nfs.conf,nfs_modprobe,tuned_*}"
+echo "  Node network:   nodes/${INCIDENT_NODE}/ip_addr"
+echo "  Node time:      nodes/${INCIDENT_NODE}/chrony"
+echo "  Kernel flags:   nodes/${INCIDENT_NODE}/kernel_red_flags.log"
+echo "  Cluster health: cluster-scoped-resources/{cluster_operators,nodes_overview,machineconfigpools,top_node}"
+echo "  VM/VMI:         namespaces/${NS}/kubevirt.io/"
+echo "  Storage chain:  PVCs, PVs, StorageClasses, DataVolumes, VolumeAttachments"
+echo "  Metrics:        incident-metrics/"
+echo "  Pod logs:       namespaces/${NS}/core/pods/"
+if [[ -d "${BASE_COLLECTION_PATH}/namespaces/${NS}/vms/${VM}" ]]; then
+    echo "  Virsh/QEMU:     namespaces/${NS}/vms/${VM}/"
+fi
+echo "========================================"
+
+exit 0
