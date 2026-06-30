@@ -153,9 +153,8 @@ check_vm() {
         report=$(echo "${report}" | jq \
             --arg name "${name}" \
             --arg installed "${version}" \
-            --arg available "${baseline}" \
             --arg status "${status}" \
-            '. + [{"driver": $name, "installed": $installed, "available": $available, "status": $status}]')
+            '. + [{"driver": $name, "installed": $installed, "status": $status}]')
     done
 
     jq -n \
