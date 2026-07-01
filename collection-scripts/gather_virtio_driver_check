@@ -194,12 +194,22 @@ checked=0
 outdated_count=0
 skipped=0
 
-mapfile -t PODS < <(/usr/bin/oc get pod --all-namespaces \
-    -l kubevirt.io=virt-launcher \
-    --field-selector=status.phase=Running \
-    --no-headers \
-    -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
-    | awk '{print $1 " " $2 " " $3}')
+# If NS and VM are set, check only that VM. Otherwise check all running VMs.
+if [[ -n "${NS:-}" && -n "${VM:-}" ]]; then
+    mapfile -t PODS < <(/usr/bin/oc get pod -n "${NS}" \
+        -l "kubevirt.io=virt-launcher" \
+        --field-selector=status.phase=Running \
+        --no-headers \
+        -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
+        | awk -v vm="${VM}" '$3 == vm {print $1 " " $2 " " $3}')
+else
+    mapfile -t PODS < <(/usr/bin/oc get pod --all-namespaces \
+        -l kubevirt.io=virt-launcher \
+        --field-selector=status.phase=Running \
+        --no-headers \
+        -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
+        | awk '{print $1 " " $2 " " $3}')
+fi
 
 if [[ ${#PODS[@]} -eq 1 && -z "${PODS[0]}" ]]; then
     PODS=()
