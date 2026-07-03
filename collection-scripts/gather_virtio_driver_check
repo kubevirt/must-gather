@@ -17,9 +17,24 @@ source "${DIR_NAME}/common.sh"
 check_command
 
 VIRTIO_VENDOR_ID=6900  # 0x1AF4 in decimal
+DRIVER_CHECK_TIMEOUT=${DRIVER_CHECK_TIMEOUT:-600}
+START_TIME=$(date +%s)
 
 DRIVER_CHECK_PATH="${BASE_COLLECTION_PATH}/virtio-win-driver-check"
 mkdir -p "${DRIVER_CHECK_PATH}"
+
+# ---------------------------------------------------------------------------
+# Timeout handling (matches gather_vm_incident pattern)
+# ---------------------------------------------------------------------------
+
+check_timeout() {
+    local elapsed=$(( $(date +%s) - START_TIME ))
+    if [[ ${elapsed} -ge ${DRIVER_CHECK_TIMEOUT} ]]; then
+        echo "WARNING: Timeout reached (${DRIVER_CHECK_TIMEOUT}s). Collection may be incomplete." >&2
+        return 1
+    fi
+    return 0
+}
 
 # ---------------------------------------------------------------------------
 # Baseline: get the expected driver version from the in-cluster virtio-win
@@ -31,7 +46,7 @@ get_baseline() {
 
     # The hco-operator may be in openshift-cnv or kubevirt-hyperconverged
     for ns in "${INSTALLATION_NAMESPACE}" openshift-cnv kubevirt-hyperconverged; do
-        virtio_img=$(/usr/bin/oc get deploy hco-operator \
+        virtio_img=$(timeout 30 /usr/bin/oc get deploy hco-operator \
             -n "${ns}" \
             -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="VIRTIOWIN_CONTAINER")].value}' 2>/dev/null)
         if [[ -n "${virtio_img}" ]]; then
@@ -48,7 +63,7 @@ get_baseline() {
 
     local raw
     local pod_name="must-gather-virtio-ver-${RANDOM}"
-    raw=$(/usr/bin/oc run "${pod_name}" \
+    raw=$(timeout 120 /usr/bin/oc run "${pod_name}" \
         --rm -i --restart=Never --quiet \
         --image="${virtio_img}" \
         --command -- sh -c 'grep -a "^DriverVer" /disk/*' 2>/dev/null)
@@ -80,7 +95,7 @@ get_vm_drivers() {
     local pod="$1" ns="$2" vm="$3"
 
     local raw
-    raw=$(/usr/bin/oc exec -n "${ns}" "${pod}" -c compute -- \
+    raw=$(timeout 30 /usr/bin/oc exec -n "${ns}" "${pod}" -c compute -- \
         virsh qemu-agent-command "${ns}_${vm}" \
         '{"execute": "guest-get-devices"}' 2>/dev/null)
 
@@ -178,6 +193,7 @@ check_vm() {
 
 echo "========================================"
 echo "VirtIO Driver Version Check"
+echo "Timeout: ${DRIVER_CHECK_TIMEOUT}s"
 echo "========================================"
 
 BASELINE=$(get_baseline)
@@ -186,6 +202,8 @@ if [[ -z "${BASELINE}" ]]; then
     jq -n '{"error": "could not determine baseline version"}' > "${DRIVER_CHECK_PATH}/summary.json"
     exit 0
 fi
+
+check_timeout || exit 0
 
 echo "Baseline driver version: ${BASELINE}"
 
@@ -196,14 +214,14 @@ skipped=0
 
 # If NS and VM are set, check only that VM. Otherwise check all running VMs.
 if [[ -n "${NS:-}" && -n "${VM:-}" ]]; then
-    mapfile -t PODS < <(/usr/bin/oc get pod -n "${NS}" \
+    mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod -n "${NS}" \
         -l "kubevirt.io=virt-launcher" \
         --field-selector=status.phase=Running \
         --no-headers \
         -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
         | awk -v vm="${VM}" '$3 == vm {print $1 " " $2 " " $3}')
 else
-    mapfile -t PODS < <(/usr/bin/oc get pod --all-namespaces \
+    mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod --all-namespaces \
         -l kubevirt.io=virt-launcher \
         --field-selector=status.phase=Running \
         --no-headers \
@@ -219,6 +237,8 @@ total=${#PODS[@]}
 echo "Found ${total} running VM(s)"
 
 for entry in "${PODS[@]}"; do
+    check_timeout || break
+
     read -r ns pod vm <<< "${entry}"
     echo "Checking ${vm} (${ns})..."
 
