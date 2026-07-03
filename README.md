@@ -351,6 +351,56 @@ no further collection is needed. If it narrows the problem but more context is r
 customer can then run a full CNV must-gather, OCP must-gather, or sosreports — but the
 support engineer already knows where to look.
 
+### VirtIO driver version check
+
+Check whether VMs are running outdated VirtIO drivers by comparing installed
+versions (queried via the QEMU guest agent) against the baseline shipped with
+the cluster's virtio-win container disk.
+
+Check a specific VM:
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- /usr/bin/gather \
+   --virtio_driver_check=default/myvm
+```
+
+Check all running VMs:
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- /usr/bin/gather \
+   --virtio_driver_check=all
+```
+
+The driver check also runs automatically as part of `--vm-incident`.
+
+VMs without the QEMU guest agent are skipped.
+
+#### Output
+
+Results are written to `virtio-win-driver-check/` in the must-gather archive:
+
+| File | Description |
+|---|---|
+| `baseline.json` | Virtio-win container disk image reference and expected driver version |
+| `summary.json` | Cluster-wide totals: VMs checked, outdated, skipped |
+| `vms/<ns>/<vm>/report.json` | Per-driver comparison with status (OK, OUTDATED, NEWER) |
+| `vms/<ns>/<vm>/installed-drivers.json` | Raw guest agent device data (VirtIO devices only) |
+
+#### Timeout
+
+The driver check is timeboxed to 10 minutes by default (configurable via
+`DRIVER_CHECK_TIMEOUT`):
+
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- DRIVER_CHECK_TIMEOUT=120 \
+   /usr/bin/gather \
+   --virtio_driver_check=all
+```
+
 ### Targeted gathering - Images information
 
 It is possible to collect image, image-stream and image-stream-tags information using the `--images` flag:
