@@ -1,0 +1,84 @@
+#!/bin/bash
+
+# Centralized Prometheus instant queries for cluster health snapshot.
+# Output: metrics/prometheus_instant/
+
+# shellcheck disable=SC2034  # COLLECTION is used by lib_env after sourcing
+COLLECTION=metrics
+
+# shellcheck source=lib_env
+. /usr/bin/lib_env
+
+runningPrometheusPod=$(timeout 30 oc -n openshift-monitoring get pods 2>/dev/null | grep prometheus-k8s- | grep Running | awk '{print $1}' | head -n 1)
+if [[ ! "${runningPrometheusPod}" =~ prometheus-k8s ]]; then
+	echo "INFO-CNV: no prometheus-k8s pod in Running state, skipping instant metrics"
+	exit 0
+fi
+
+queryCommand="oc -n openshift-monitoring exec ${runningPrometheusPod} -- curl -s --connect-timeout 5 --max-time 25 localhost:9090/api/v1/query?"
+
+declare -a metrics=(
+	cluster_cpu_utilization
+	cluster_memory_utilization
+	pending_pods
+	node_pressure_conditions
+	kubevirt_vmi_not_ready
+	kubevirt_vmi_phase_count
+	kubevirt_firing_alerts
+	kubevirt_vmi_storage_read_latency_avg
+	kubevirt_vmi_storage_write_latency_avg
+	kubevirt_vmi_storage_flush_latency_avg
+	kubevirt_vmi_vcpu_io_wait_rate
+	node_mountstats_nfs_event_delay_total
+	node_mountstats_nfs_operations_requests_total
+	windows_exporter_up
+)
+
+declare -A queries=(
+	["cluster_cpu_utilization"]="'query=100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))'"
+	["cluster_memory_utilization"]="'query=100 * (1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))'"
+	["pending_pods"]="'query=count(kube_pod_status_phase{phase=\"Pending\"} == 1)'"
+	["node_pressure_conditions"]="'query=kube_node_status_condition{condition=~\"MemoryPressure|DiskPressure|PIDPressure\",status=\"true\"} == 1'"
+	["kubevirt_vmi_not_ready"]="'query=kubevirt_vmi_status_ready == 0'"
+	["kubevirt_vmi_phase_count"]="'query=sum by (phase) (kubevirt_vmi_phase_count)'"
+	["kubevirt_firing_alerts"]="'query=ALERTS{alertstate=\"firing\",kubernetes_operator_part_of=\"kubevirt\"}'"
+	["kubevirt_vmi_storage_read_latency_avg"]="'query=(sum by (namespace, name, drive) (rate(kubevirt_vmi_storage_read_times_seconds_total[5m])) / sum by (namespace, name, drive) (rate(kubevirt_vmi_storage_iops_read_total[5m])))'"
+	["kubevirt_vmi_storage_write_latency_avg"]="'query=(sum by (namespace, name, drive) (rate(kubevirt_vmi_storage_write_times_seconds_total[5m])) / sum by (namespace, name, drive) (rate(kubevirt_vmi_storage_iops_write_total[5m])))'"
+	["kubevirt_vmi_storage_flush_latency_avg"]="'query=(sum by (namespace, name, drive) (rate(kubevirt_vmi_storage_flush_times_seconds_total[5m])) / sum by (namespace, name, drive) (rate(kubevirt_vmi_storage_flush_requests_total[5m])))'"
+	["kubevirt_vmi_vcpu_io_wait_rate"]="'query=sum by (namespace, name) (rate(kubevirt_vmi_vcpu_wait_seconds_total[5m]))'"
+	["node_mountstats_nfs_event_delay_total"]="'query=node_mountstats_nfs_event_delay_total'"
+	["node_mountstats_nfs_operations_requests_total"]="'query=node_mountstats_nfs_operations_requests_total'"
+	["windows_exporter_up"]="'query=up{namespace=\"openshift-windows-machine-config-operator\",container=\"windows-exporter\"}'"
+)
+
+hasCnv=false
+hasWindows=false
+timeout 10 oc get ns "${INSTALLATION_NAMESPACE}" &>/dev/null && hasCnv=true
+if timeout 10 oc get nodes -l node.openshift.io/os_id=Windows -o name 2>/dev/null | grep -q .; then
+	hasWindows=true
+fi
+
+nMetrics=${#metrics[@]}
+idx=0
+for oneMetric in "${metrics[@]}"; do
+	((idx=idx+1))
+
+	case "${oneMetric}" in
+		kubevirt_*|node_mountstats_nfs_*)
+			[[ "${hasCnv}" == "false" ]] && continue
+			;;
+		windows_exporter_up)
+			[[ "${hasWindows}" == "false" ]] && continue
+			;;
+	esac
+
+	echo "INFO-CNV [${idx}/${nMetrics}] prometheus instant [${oneMetric}]"
+	query="${queries[$oneMetric]}"
+	finalCommand="${queryCommand} --data-urlencode ${query}"
+	timeout 30 bash -c "${finalCommand}" > "${DIR}/${oneMetric}.json" 2> "${DIR}/${oneMetric}_err.json"
+done
+
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "${DIR}/timestamp"
+printf 'cnv=%s\nwindows=%s\n' "${hasCnv}" "${hasWindows}" > "${DIR}/query_scope.txt"
+
+sync

@@ -15,6 +15,11 @@ You will get a dump of:
 - The Hyperconverged Cluster Operator namespaces (and its children objects)
 - All namespaces (and their children objects) that belong to any KubeVirt resources
 - All KubeVirt CRD's definitions
+- Per-node system and storage diagnostics (dmesg, dmidecode, sysctl, NFS config, PSI counters, kernel red-flag scan)
+- CNV guest events (GuestPanicked, LivenessProbeFailed) across VM namespaces
+- Prometheus instant metrics (cluster utilization, VM phases, storage latencies, NFS counters)
+- ClusterRole definitions (cluster-reader posture, KubeVirt RBAC baseline)
+- Windows worker node posture data (when Windows nodes are present)
 
 By default, the VMs definitions won't be included, but only the VM Instances' custom resources.
 
@@ -69,11 +74,28 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   > - ssp
   > - virtualmachines
   > - webhooks
+  > - instancetypes
+  > - virtualization
+  > - cnv_events
+  > - prometheus_instant
+  > - clusterroles
+  > - windows_nodes
 
   > You can also choose to enable optional collectors combining one
   > or more of the following parameters:
   --images
   --vms_details
+
+  > Incident collection for a specific VM at a known time.
+  > Unlike a full must-gather, this collects ONLY data pertinent to the
+  > incident: right VM, right node, right time window. No cluster-wide
+  > noise. Timeboxed to 10 minutes.
+  --vm-incident --incident-time=<RFC3339 timestamp>
+    Requires NS and VM environment variables. Skips all other collectors.
+    Example:
+      oc adm must-gather --image=quay.io/kubevirt/must-gather \
+        -- NS=myns VM=myvm \
+        /usr/bin/gather --vm-incident --incident-time=2026-06-06T06:06:00Z
 ```
 
 ### Parallelism

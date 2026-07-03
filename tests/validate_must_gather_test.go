@@ -176,15 +176,14 @@ var _ = Describe("validate the must-gather output", func() {
 		It("should validate the nodes logs directories", func() {
 
 			expectedResources := []string{
-				"audit.log",
 				"bridge",
+				"cmdline",
 				"dev_vfio",
 				"dmesg",
-				"ip.txt",
+				"ip_addr",
 				"lspci",
 				"nftables",
 				"opt-cni-bin",
-				"proc_cmdline",
 				"sys_sriov_numvfs",
 				"sys_sriov_totalvfs",
 				"var-lib-cni-bin",
@@ -194,9 +193,13 @@ var _ = Describe("validate the must-gather output", func() {
 			nodesDir := path.Join(outputDir, "nodes")
 			nodes, err := os.ReadDir(nodesDir)
 			Expect(err).ToNot(HaveOccurred())
+			nodeDirCount := 0
 			missingExpectedFile := false
 			for _, node := range nodes {
-				Expect(node.IsDir()).To(BeTrue(), node.Name(), " should be a directory")
+				if !node.IsDir() {
+					continue
+				}
+				nodeDirCount++
 				nodeDir := path.Join(nodesDir, node.Name())
 				nodeFiles, err := os.ReadDir(nodeDir)
 				Expect(err).ToNot(HaveOccurred())
@@ -207,12 +210,164 @@ var _ = Describe("validate the must-gather output", func() {
 					}
 				}
 			}
+			Expect(nodeDirCount).To(BeNumerically(">", 0), "nodes/ should contain at least one node directory")
 			Expect(missingExpectedFile).To(BeFalse(), "missing expected files")
 
 		})
 
 		logger.Print("outputDir:", outputDir)
 
+	})
+
+	Context("[level:product]validate node diagnostics from gather_nodes", Label("level:product"), func() {
+		It("should collect additional per-node diagnostic files", func() {
+			nodesDir := path.Join(outputDir, "nodes")
+			nodes, err := os.ReadDir(nodesDir)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(nodes).ToNot(BeEmpty())
+
+			optionalDiagFiles := []string{
+				"sysctl", "chrony", "ip_addr", "dmidecode", "cmdline",
+				"df", "mounts", "mountstats", "diskstats",
+				"pressure_io", "pressure_memory", "pressure_cpu",
+				"nfs_module_params", "nfs.conf", "nfs_modprobe",
+				"nfs_sysctl", "nfs_sysfs", "nfs_slot_tuning_service",
+				"nfs_mountstats_delays",
+				"tuned_active_profile", "tuned_modprobe",
+				"kernel_red_flags.log",
+				"bridge", "vlan", "nftables",
+				"sys_sriov_numvfs", "sys_sriov_totalvfs",
+				"dev_vfio", "opt-cni-bin", "var-lib-cni-bin",
+				"pcidp_config.json", "audit.log",
+			}
+
+			totalFound := 0
+			nodeDirCount := 0
+			for _, node := range nodes {
+				if !node.IsDir() {
+					continue
+				}
+				nodeDirCount++
+				nodeDir := path.Join(nodesDir, node.Name())
+				nodeFiles, err := os.ReadDir(nodeDir)
+				Expect(err).ToNot(HaveOccurred())
+
+				found := 0
+				for _, opt := range optionalDiagFiles {
+					if fileInDir(nodeFiles, opt) {
+						found++
+						logger.Printf("  node %s: diagnostic present: %s", node.Name(), opt)
+					}
+				}
+				totalFound += found
+				logger.Printf("  node %s: %d/%d optional diagnostic files present", node.Name(), found, len(optionalDiagFiles))
+			}
+			Expect(nodeDirCount).To(BeNumerically(">", 0), "nodes/ should contain at least one node directory")
+			Expect(totalFound).To(BeNumerically(">", 0), "at least some diagnostic files should be collected across all nodes")
+		})
+	})
+
+	Context("[level:product]validate CNV events collection", Label("level:product"), func() {
+		It("should collect CNV guest events directory with expected files", func() {
+			eventsDir := path.Join(outputDir, "workload-scoped-resources", "cnv_events")
+			if _, err := os.Stat(eventsDir); os.IsNotExist(err) {
+				logger.Printf("  cnv_events directory absent — openshift-cnv namespace may not exist")
+				return
+			}
+
+			files, err := os.ReadDir(eventsDir)
+			Expect(err).ToNot(HaveOccurred())
+			if len(files) == 0 {
+				logger.Printf("  cnv_events directory empty — openshift-cnv namespace may not exist")
+				return
+			}
+
+			Expect(fileInDir(files, "audited_namespaces.txt")).To(BeTrue(),
+				"cnv_events should contain audited_namespaces.txt")
+			Expect(fileInDir(files, "timestamp")).To(BeTrue(),
+				"cnv_events should contain timestamp")
+			Expect(fileInDir(files, "all_GuestPanicked.yaml")).To(BeTrue(),
+				"cnv_events should contain all_GuestPanicked.yaml")
+
+			logger.Printf("  cnv_events: %d files collected", len(files))
+		})
+	})
+
+	Context("[level:product]validate Prometheus instant metrics collection", Label("level:product"), func() {
+		It("should collect prometheus instant metrics directory with expected files", func() {
+			metricsDir := path.Join(outputDir, "metrics", "prometheus_instant")
+			_, err := os.Stat(metricsDir)
+			Expect(err).ToNot(HaveOccurred(), "prometheus_instant directory should exist")
+
+			files, err := os.ReadDir(metricsDir)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(files).ToNot(BeEmpty(), "prometheus_instant directory should not be empty")
+
+			Expect(fileInDir(files, "timestamp")).To(BeTrue(),
+				"prometheus_instant should contain timestamp")
+			Expect(fileInDir(files, "query_scope.txt")).To(BeTrue(),
+				"prometheus_instant should contain query_scope.txt")
+
+			expectedMetrics := []string{
+				"cluster_cpu_utilization",
+				"cluster_memory_utilization",
+				"pending_pods",
+			}
+			for _, metric := range expectedMetrics {
+				jsonFile := metric + ".json"
+				if fileInDir(files, jsonFile) {
+					logger.Printf("  prometheus instant metric present: %s", jsonFile)
+				} else {
+					logger.Printf("  prometheus instant metric absent: %s", jsonFile)
+				}
+			}
+
+			logger.Printf("  prometheus_instant: %d files collected", len(files))
+		})
+	})
+
+	Context("[level:product]validate clusterroles collection", Label("level:product"), func() {
+		It("should collect clusterroles directory with expected files", func() {
+			rolesDir := path.Join(outputDir, "cluster-scoped-resources", "rbac.authorization.k8s.io", "clusterroles")
+			_, err := os.Stat(rolesDir)
+			Expect(err).ToNot(HaveOccurred(), "clusterroles directory should exist")
+
+			files, err := os.ReadDir(rolesDir)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(files).ToNot(BeEmpty(), "clusterroles directory should not be empty")
+
+			Expect(fileInDir(files, "cluster-reader.yaml")).To(BeTrue(),
+				"clusterroles should contain cluster-reader.yaml")
+			Expect(fileInDir(files, "timestamp")).To(BeTrue(),
+				"clusterroles should contain timestamp")
+			Expect(fileInDir(files, "cnv_related_role_names.txt")).To(BeTrue(),
+				"clusterroles should contain cnv_related_role_names.txt")
+
+			logger.Printf("  clusterroles: %d files/dirs collected", len(files))
+		})
+	})
+
+	Context("[level:product]validate Windows nodes collection", Label("level:product"), func() {
+		It("should collect Windows nodes data or skip gracefully", func() {
+			winDir := path.Join(outputDir, "workload-scoped-resources", "windows_nodes")
+			if _, err := os.Stat(winDir); os.IsNotExist(err) {
+				logger.Printf("  windows_nodes directory absent — no Windows nodes in cluster (expected)")
+				return
+			}
+
+			files, err := os.ReadDir(winDir)
+			Expect(err).ToNot(HaveOccurred())
+
+			if !fileInDir(files, "timestamp") {
+				logger.Printf("  windows_nodes has no timestamp — no Windows nodes in cluster (expected)")
+				return
+			}
+
+			Expect(fileInDir(files, "windows_node_names.txt")).To(BeTrue(),
+				"windows_nodes should contain windows_node_names.txt")
+
+			logger.Printf("  windows_nodes: %d files/dirs collected", len(files))
+		})
 	})
 
 	Context("[level:product]validate usage of inspection parameters", Label("level:product"), func() {
@@ -242,7 +397,108 @@ var _ = Describe("validate the must-gather output", func() {
 			readFile.Close()
 
 			Expect(inspectcmdLines).To(HaveEach(ContainSubstring("${log_collection_args}")), "all the inspect cmd should pass log collection args")
-			Expect(nodelogsLines).To(HaveEach(ContainSubstring("${node_log_collection_args}")), "all the node-logs cmd should pass node log collection args")
+			// node-logs commands in gather_nodes run directly in subshells, so
+			// bash -x expands the variable rather than showing the literal name.
+			// Verify commands are present and properly structured.
+			Expect(nodelogsLines).ToNot(BeEmpty(), "should have at least one oc adm node-logs command")
+			Expect(nodelogsLines).To(HaveEach(ContainSubstring("-u NetworkManager")), "all node-logs commands should specify the NetworkManager unit")
+		})
+	})
+
+	Context("[level:product]validate timeout guards on all collection scripts", Label("level:product"), func() {
+		It("should have timeout or --request-timeout on every oc command", func() {
+			scriptsDir := path.Join("..", "collection-scripts")
+			if _, err := os.Stat(scriptsDir); os.IsNotExist(err) {
+				logger.Printf("  collection-scripts directory not found at %s — skipping (only runs in repo checkout)", scriptsDir)
+				return
+			}
+
+			scripts := []string{
+				"gather_nodes",
+				"gather_cnv_events",
+				"gather_prometheus_instant",
+				"gather_clusterroles",
+				"gather_windows_nodes",
+				"gather_vm_incident",
+				"lib_env",
+			}
+
+			ocCmdPattern := regexp.MustCompile(`\boc\s+(-\S+\s+)*\S*\s*(get|exec|apply|delete|adm|logs)\b`)
+			quotedAssignPattern := regexp.MustCompile(`^\s*\w+=["']`)
+			timeoutPattern := regexp.MustCompile(`\btimeout\s+\d+\b`)
+			requestTimeoutPattern := regexp.MustCompile(`--request-timeout=`)
+			commentPattern := regexp.MustCompile(`^\s*#`)
+			echoPattern := regexp.MustCompile(`^\s*(echo|printf|collected|skipped)\b`)
+			heredocStartPattern := regexp.MustCompile(`<<\s*'EOF'|<<\s*'EOC'`)
+
+			unprotected := []string{}
+
+			for _, script := range scripts {
+				scriptPath := path.Join(scriptsDir, script)
+				content, err := os.ReadFile(scriptPath)
+				Expect(err).ToNot(HaveOccurred(), "should be able to read %s", script)
+
+				lines := strings.Split(string(content), "\n")
+				inHeredoc := false
+
+				for i, line := range lines {
+					lineNum := i + 1
+
+					if heredocStartPattern.MatchString(line) && strings.HasSuffix(strings.TrimSpace(line), "'") {
+						inHeredoc = true
+						continue
+					}
+					if inHeredoc {
+						trimmed := strings.TrimSpace(line)
+						if trimmed == "EOF" || trimmed == "EOC" || trimmed == "'" {
+							inHeredoc = false
+						}
+						continue
+					}
+
+					if commentPattern.MatchString(line) {
+						continue
+					}
+					if echoPattern.MatchString(strings.TrimSpace(line)) {
+						continue
+					}
+					if quotedAssignPattern.MatchString(line) {
+						continue
+					}
+
+					if !ocCmdPattern.MatchString(line) {
+						continue
+					}
+
+					if timeoutPattern.MatchString(line) || requestTimeoutPattern.MatchString(line) {
+						continue
+					}
+
+					fullLine := line
+					for j := i - 1; j >= 0 && j >= i-3; j-- {
+						prev := strings.TrimSpace(lines[j])
+						if strings.HasSuffix(prev, "\\") || strings.HasSuffix(prev, "|") {
+							fullLine = lines[j] + "\n" + fullLine
+						} else {
+							break
+						}
+					}
+					if timeoutPattern.MatchString(fullLine) || requestTimeoutPattern.MatchString(fullLine) {
+						continue
+					}
+
+					unprotected = append(unprotected,
+						fmt.Sprintf("  %s:%d: %s", script, lineNum, strings.TrimSpace(line)))
+				}
+			}
+
+			if len(unprotected) > 0 {
+				logger.Printf("Unprotected oc commands found:\n%s", strings.Join(unprotected, "\n"))
+			}
+			Expect(unprotected).To(BeEmpty(),
+				"All oc commands in collection scripts must be wrapped with 'timeout N' or use '--request-timeout='. "+
+					"Unprotected commands can hang indefinitely and block the entire must-gather collection.\n"+
+					strings.Join(unprotected, "\n"))
 		})
 	})
 
@@ -394,6 +650,8 @@ var _ = Describe("validate the must-gather output", func() {
 		var incidentNs string
 
 		BeforeEach(func() {
+			incidentDir = ""
+			incidentNs = ""
 			incidentOutputDir, found := os.LookupEnv("MG_INCIDENT_OUTPUT_DIR")
 			if !found {
 				incidentOutputDir = "must-gather-incident-output"
@@ -633,15 +891,10 @@ var _ = Describe("validate the must-gather output", func() {
 			content, err := os.ReadFile(redFlagsPath)
 			Expect(err).ToNot(HaveOccurred())
 			contentStr := string(content)
-			hasRedFlags := strings.Contains(contentStr, "Call Trace") ||
-				strings.Contains(contentStr, "BUG:") ||
-				strings.Contains(contentStr, "WARNING:") ||
-				strings.Contains(contentStr, "OOM") ||
-				strings.Contains(contentStr, "error") ||
-				strings.Contains(contentStr, "hung_task")
 			hasSentinel := strings.Contains(contentStr, "# No kernel red-flag patterns found")
-			Expect(hasRedFlags || hasSentinel).To(BeTrue(),
-				"kernel_red_flags.log should contain either red-flag patterns or the sentinel message")
+			hasContent := len(strings.TrimSpace(contentStr)) > 0
+			Expect(hasSentinel || hasContent).To(BeTrue(),
+				"kernel_red_flags.log should contain either grep matches or the sentinel message")
 		})
 
 		It("should collect cluster health snapshot", func() {

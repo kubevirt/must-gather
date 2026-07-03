@@ -1,126 +1,357 @@
 #!/bin/bash -x
 
+# Per-node networking, SR-IOV, CNI, system, NFS, storage, and kernel diagnostics.
+#
+# Two modes (automatic):
+#   1. NODE_GATHER_POD set → oc exec against caller-provided pod (incident mode)
+#   2. NODE_GATHER_POD unset → deploy DaemonSet, oc exec per-node pod (default gather)
+#
+# TARGET_NODE set → collect from this node only
+# TARGET_NODE unset → collect from all nodes (parallel, MAX_PARALLEL_NODES cap)
+#
+# Output per node: nodes/<node>/{dmesg,dmidecode,lspci,cmdline,sysctl,chrony,ip_addr,
+#   df,mounts,mountstats,diskstats,pressure_*,nfs_module_params,nfs.conf,nfs_modprobe,
+#   nfs_sysctl,nfs_sysfs,nfs_slot_tuning_service,nfs_mountstats_delays,tuned_*,
+#   kernel_red_flags.log,bridge,vlan,nftables,sys_sriov_numvfs,sys_sriov_totalvfs,
+#   dev_vfio,opt-cni-bin,var-lib-cni-bin,pcidp_config.json,audit.log}
+
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+# shellcheck source=common.sh
 source "${DIR_NAME}/common.sh"
 check_command
 get_log_collection_args
 
-MANIFEST_PATH=${MANIFEST_PATH:-"/etc"}
-
-check_node_gather_pods_ready() {
-    line=$(oc get ds node-gather-daemonset -o=custom-columns=DESIRED:.status.desiredNumberScheduled,READY:.status.numberReady --no-headers -n node-gather)
-
-    IFS=$' '
-    read -r desired ready <<< "$line"
-    IFS=$'\n'
-
-    if [[ "$desired" != "0" ]] && [[ "$ready" == "$desired" ]]
-    then
-       return 0
-    else
-       return 1
-    fi
-}
-
-IFS=$'\n'
+MAX_PARALLEL_NODES=${MAX_PARALLEL_NODES:-5}
 
 export NODES_PATH=${BASE_COLLECTION_PATH}/nodes
 mkdir -p "${NODES_PATH}"
 
-CRD_MANIFEST="${MANIFEST_PATH}/node-gather-crd.yaml"
-DAEMONSET_MANIFEST="${MANIFEST_PATH}/node-gather-ds.yaml"
-
-if [[ -z ${MUST_GATHER_IMAGE} ]]; then
-  NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-  MUST_GATHER_IMAGE=${MUST_GATHER_IMAGE:-$(oc get pod -n "$NAMESPACE" "$POD_NAME" -o jsonpath="{.spec.containers[0].image}")}
+if [[ -n "${TARGET_NODE}" ]]; then
+    NODES="${TARGET_NODE}"
+else
+    NODES="$(timeout 30 oc get nodes -o jsonpath='{.items[?(@.kind=="Node")].metadata.name}')"
 fi
 
-oc apply -f "${CRD_MANIFEST}"
-oc adm policy add-scc-to-user privileged -n node-gather -z node-gather
+# --- DaemonSet deployment (when NODE_GATHER_POD is not provided) ---
+DEPLOYED_DAEMONSET=false
+CALLER_POD="${NODE_GATHER_POD}"
 
-sed -e "s#MUST_GATHER_IMAGE#${MUST_GATHER_IMAGE}#" "${DAEMONSET_MANIFEST}" | oc apply -f -
-
-COUNTER=0
-until check_node_gather_pods_ready || [ $COUNTER -eq 300 ]; do
-    if [[ $(( COUNTER % 20 )) == 0 ]]; then
-        echo "Waiting for node-gather-daemonset to be ready"
-    fi
-    (( COUNTER++ ))
-    sleep 1
-done
-
-for line in $(oc get pod -o=custom-columns=NODE:.spec.nodeName --no-headers --field-selector=status.phase!=Running -n node-gather)
-do
-    echo "Failed to collect node-gather data from node ${line} due to pod scheduling failure." >> "${NODES_PATH}/skipped_nodes.txt"
-done
-
-function gather_single_pod() {
-    line="$1"
-
-    node=$(echo "$line" | awk -F '_' '{print $1}')
-    pod=$(echo "$line" | awk -F '_' '{print $2}')
-    NODE_PATH=${NODES_PATH}/$node
-    mkdir -p "${NODE_PATH}"
-
-    echo "$pod - Gathering node data for ${node}"
-
-    oc exec "$pod" -n node-gather -- ip a 2>/dev/null >> "$NODE_PATH/ip.txt"
-    oc exec "$pod" -n node-gather -- ip -o link show type bridge 2>/dev/null >> "$NODE_PATH/bridge"
-    oc exec "$pod" -n node-gather -- bridge -j vlan show 2>/dev/null >> "$NODE_PATH/vlan"
-
-    oc exec "$pod" -n node-gather -- nft list ruleset 2>/dev/null > "$NODE_PATH/nftables"
-
-    # shellcheck disable=SC2016
-    oc exec "$pod" -n node-gather -- /bin/bash -c 'for dev in /host/sys/bus/pci/devices/*; do if [[ -e $dev/sriov_numvfs ]]; then echo "sriov_numvfs on dev ${dev##*/}: $(cat $dev/sriov_numvfs)"; fi; done' >> "$NODE_PATH/sys_sriov_numvfs"
-    # shellcheck disable=SC2016
-    oc exec "$pod" -n node-gather -- /bin/bash -c 'for dev in /host/sys/bus/pci/devices/*; do if [[ -e $dev/sriov_totalvfs ]]; then echo "sriov_totalvfs on dev ${dev##*/}: $(cat $dev/sriov_totalvfs)"; fi; done' >> "$NODE_PATH/sys_sriov_totalvfs"
-
-    oc exec "$pod" -n node-gather -- /bin/bash -c 'if [[ -d /host/opt/cni/bin ]]; then ls -l /host/opt/cni/bin; fi' > "${NODE_PATH}/opt-cni-bin"
-    oc exec "$pod" -n node-gather -- /bin/bash -c 'if [[ -d /host/var/lib/cni/bin ]]; then ls -l /host/var/lib/cni/bin; fi' > "${NODE_PATH}/var-lib-cni-bin"
-
-    config_dirs=(etc/cni/net.d etc/kubernetes/cni/net.d)
-    IFS=$' '
-    for conf_dir in "${config_dirs[@]}"; do
-        oc exec "$pod" -n node-gather -- [ -d "/host/$conf_dir" ] 2>/dev/null
-        if oc exec "$pod" -n node-gather -- [ -d "/host/$conf_dir" ] 2>/dev/null; then
-            CNI_COFIG_PATH=${NODE_PATH}/$conf_dir
-            mkdir -p "${CNI_COFIG_PATH}"
-            timeout 60 oc cp "$pod:/host/$conf_dir ${CNI_COFIG_PATH}" -n node-gather 2>/dev/null
-            if [[ $? == 124 ]]; then
-              echo "[ERROR] timeout copying /host/${conf_dir} from ${pod}"
-            fi
-        fi
-    done
-    IFS=$'\n'
-
-    oc exec "$pod" -n node-gather -- ls -al /host/dev/vfio/ 2>/dev/null >> "${NODE_PATH}/dev_vfio"
-    oc exec "$pod" -n node-gather -- dmesg 2>/dev/null >> "${NODE_PATH}/dmesg"
-    oc exec "$pod" -n node-gather -- cat /host/proc/cmdline 2>/dev/null >> "${NODE_PATH}/proc_cmdline"
-    oc exec "$pod" -n node-gather -- lspci -vv 2>/dev/null >> "${NODE_PATH}/lspci"
-
-    if oc exec "$pod" -n node-gather -- [ -f /host/etc/pcidp/config.json ] 2>/dev/null; then
-        timeout 60 oc cp "$pod:/host/etc/pcidp/config.json" "${NODE_PATH}/pcidp_config.json" -n node-gather 2>/dev/null
-        if [[ $? == 124 ]]; then
-          echo "[ERROR] timeout copying /host/etc/pcidp/config.json from ${pod}"
-        fi
-    fi
-    if oc exec "$pod" -n node-gather -- [ -f /host/var/log/audit/audit.log ] 2>/dev/null; then
-        timeout 60 oc cp "$pod:/host/var/log/audit/audit.log" "${NODE_PATH}/audit.log" -n node-gather 2>/dev/null
-        if [[ $? == 124 ]]; then
-          echo "[ERROR] timeout copying /host/var/log/audit/audit.log from ${pod}"
-        fi
-    fi
+check_node_gather_pods_ready() {
+    local line desired scheduled ready
+    line=$(timeout 10 /usr/bin/oc get ds node-gather-daemonset \
+        -o=custom-columns=DESIRED:.status.desiredNumberScheduled,SCHED:.status.currentNumberScheduled,READY:.status.numberReady \
+        --no-headers -n node-gather 2>/dev/null)
+    IFS=$' ' read -r desired scheduled ready <<< "$line"
+    scheduled=${scheduled:-0}
+    ready=${ready:-0}
+    [[ "$desired" != "0" && "$ready" != "0" && "$ready" == "$scheduled" ]]
 }
 
-export -f gather_single_pod
-pods=$(oc get pod -o=custom-columns=NODE:.spec.nodeName,NAME:.metadata.name --no-headers --field-selector=status.phase=Running -n node-gather | awk '{print $1 "_" $2}')
-echo "${pods[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'gather_single_pod $1' -- {}
+cleanup_daemonset() {
+    echo "Cleaning up node-gather resources..."
+    timeout 30 /usr/bin/oc delete -f "${DAEMONSET_MANIFEST}" --wait=false 2>/dev/null
+    timeout 30 /usr/bin/oc delete -f "${CRD_MANIFEST}" --wait=false 2>/dev/null
+}
 
-# wait
+if [[ -z "${CALLER_POD}" ]]; then
+    MANIFEST_PATH=${MANIFEST_PATH:-"/etc"}
+    CRD_MANIFEST="${MANIFEST_PATH}/node-gather-crd.yaml"
+    DAEMONSET_MANIFEST="${MANIFEST_PATH}/node-gather-ds.yaml"
 
-# Collect journal logs for specified units for all nodes
-nodes=$(oc get nodes --no-headers -o custom-columns=':metadata.name')
-echo "${nodes[@]}" | tr ' ' '\n' | xargs -t -I{} -P "${PROS}" --max-args=1 sh -c 'mkdir -p $2; oc adm node-logs ${node_log_collection_args} $1 -u NetworkManager > $2/${1}_logs_NetworkManager' -- {} "${NODES_PATH}"/{}
+    if [[ -z ${MUST_GATHER_IMAGE} ]]; then
+        MG_NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+        MUST_GATHER_IMAGE=${MUST_GATHER_IMAGE:-$(timeout 30 /usr/bin/oc get pod -n "$MG_NAMESPACE" "$POD_NAME" -o jsonpath="{.spec.containers[0].image}" 2>/dev/null)}
+    fi
 
-oc delete -f "${DAEMONSET_MANIFEST}"
-oc delete -f "${CRD_MANIFEST}"
+    if [[ -n "${MUST_GATHER_IMAGE}" ]]; then
+        # Wait for a previous node-gather namespace to finish terminating
+        NS_PHASE=$(timeout 10 /usr/bin/oc get ns node-gather -o jsonpath='{.status.phase}' 2>/dev/null)
+        if [[ "${NS_PHASE}" == "Terminating" ]]; then
+            echo "Waiting for previous node-gather namespace to terminate..."
+            COUNTER=0
+            while [[ "${NS_PHASE}" == "Terminating" && $COUNTER -lt 60 ]]; do
+                sleep 2
+                (( COUNTER+=2 ))
+                NS_PHASE=$(timeout 10 /usr/bin/oc get ns node-gather -o jsonpath='{.status.phase}' 2>/dev/null)
+            done
+            if [[ "${NS_PHASE}" == "Terminating" ]]; then
+                echo "WARNING: node-gather namespace stuck in Terminating. Skipping node diagnostics."
+                exit 0
+            fi
+        fi
+
+        echo "Deploying node-gather DaemonSet..."
+        timeout 30 /usr/bin/oc apply -f "${CRD_MANIFEST}"
+        timeout 30 /usr/bin/oc adm policy add-scc-to-user privileged -n node-gather -z node-gather
+        sed -e "s#MUST_GATHER_IMAGE#${MUST_GATHER_IMAGE}#" "${DAEMONSET_MANIFEST}" \
+            | timeout 30 /usr/bin/oc apply -f -
+        DEPLOYED_DAEMONSET=true
+        trap cleanup_daemonset EXIT
+
+        echo "Waiting for node-gather pods..."
+        COUNTER=0
+        { set +x; } 2>/dev/null
+        until check_node_gather_pods_ready || [ $COUNTER -eq 300 ]; do
+            if [[ $(( COUNTER % 20 )) == 0 ]]; then
+                echo "  Waiting for node-gather-daemonset to be ready..."
+            fi
+            (( COUNTER++ ))
+            sleep 1
+        done
+        set -x
+
+        # Report pods that failed to schedule
+        for line in $(timeout 30 /usr/bin/oc get pod -o=custom-columns=NODE:.spec.nodeName --no-headers --field-selector=status.phase!=Running -n node-gather 2>/dev/null); do
+            echo "Failed to collect node-gather data from node ${line} due to pod scheduling failure." >> "${NODES_PATH}/skipped_nodes.txt"
+        done
+    else
+        echo "WARNING: Could not determine must-gather image. Skipping node diagnostics."
+    fi
+
+    if [[ "${DEPLOYED_DAEMONSET}" != "true" && -z "${CALLER_POD}" ]]; then
+        echo "WARNING: No node-gather pod available. Skipping node diagnostics."
+        exit 0
+    fi
+fi
+
+# --- Cluster-level NFS tuning audit ---
+CLUSTER_NFS_PATH="${BASE_COLLECTION_PATH}/cluster-scoped-resources/nfs-tuning"
+mkdir -p "${CLUSTER_NFS_PATH}"
+
+echo "Collecting NFS tuning MachineConfigs..."
+timeout 30 oc get machineconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | \
+    grep -iE 'nfs-tuning|nfs-slot-tuning' | sort -u > "${CLUSTER_NFS_PATH}/nfs_tuning_machineconfig_names" 2>/dev/null || true
+
+echo "Collecting cluster-monitoring-config..."
+timeout 30 oc get cm cluster-monitoring-config -n openshift-monitoring -o yaml 2>/dev/null \
+    > "${CLUSTER_NFS_PATH}/nfs_cluster_monitoring_config.yaml" || true
+
+# --- Per-node collection function ---
+collect_node() {
+    local node="$1"
+    local NODE_PATH="${NODES_PATH}/${node}"
+    mkdir -p "${NODE_PATH}"
+
+    local node_pod="${CALLER_POD}"
+    if [[ -z "${node_pod}" && "${DEPLOYED_DAEMONSET}" == "true" ]]; then
+        node_pod=$(timeout 30 /usr/bin/oc get pod -n node-gather \
+            --field-selector="status.phase=Running,spec.nodeName=${node}" \
+            --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null | head -1)
+    fi
+
+    if [[ -z "${node_pod}" ]]; then
+        echo "WARNING: No node-gather pod found for ${node}, skipping."
+        return
+    fi
+
+    local NODE_GATHER_POD="${node_pod}"
+    echo "Collecting from ${node} via pod ${NODE_GATHER_POD}..."
+    local exec_pids=()
+
+    # --- Batch 1: kernel/hardware basics ---
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- dmesg 2>/dev/null \
+        > "${NODE_PATH}/dmesg" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- dmidecode 2>/dev/null \
+        > "${NODE_PATH}/dmidecode" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- lspci -vv 2>/dev/null \
+        > "${NODE_PATH}/lspci" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/cmdline 2>/dev/null \
+        > "${NODE_PATH}/cmdline" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/self/mountstats 2>/dev/null \
+        > "${NODE_PATH}/mountstats" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/diskstats 2>/dev/null \
+        > "${NODE_PATH}/diskstats" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/io 2>/dev/null \
+        > "${NODE_PATH}/pressure_io" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+    exec_pids=()
+
+    # --- Batch 2: pressure, filesystem, tunables ---
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/memory 2>/dev/null \
+        > "${NODE_PATH}/pressure_memory" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/cpu 2>/dev/null \
+        > "${NODE_PATH}/pressure_cpu" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- df -h 2>/dev/null \
+        > "${NODE_PATH}/df" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/mounts 2>/dev/null \
+        > "${NODE_PATH}/mounts" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- sysctl -a 2>/dev/null \
+        > "${NODE_PATH}/sysctl" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- ip a 2>/dev/null \
+        > "${NODE_PATH}/ip_addr" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- chronyc -m sources tracking 2>/dev/null \
+        > "${NODE_PATH}/chrony" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+    exec_pids=()
+
+    # --- Batch 3: NFS, tuned, networking ---
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'for f in /host/sys/module/nfs/parameters/*; do echo "$(basename "$f") = $(cat "$f" 2>/dev/null)"; done; for f in /host/sys/module/nfsd/parameters/* 2>/dev/null; do echo "nfsd/$(basename "$f") = $(cat "$f" 2>/dev/null)"; done' 2>/dev/null \
+        > "${NODE_PATH}/nfs_module_params" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- tuned-adm active 2>/dev/null \
+        > "${NODE_PATH}/tuned_active_profile" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/etc/modprobe.d/tuned.conf 2>/dev/null \
+        > "${NODE_PATH}/tuned_modprobe" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/etc/nfs.conf 2>/dev/null \
+        > "${NODE_PATH}/nfs.conf" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'for f in /host/etc/modprobe.d/*.conf; do [ -f "$f" ] || continue; echo "=== $(basename "$f") ==="; cat "$f"; done' 2>/dev/null \
+        > "${NODE_PATH}/nfs_modprobe" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- ip -o link show type bridge 2>/dev/null \
+        > "${NODE_PATH}/bridge" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- bridge -j vlan show 2>/dev/null \
+        > "${NODE_PATH}/vlan" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+    exec_pids=()
+
+    # --- Batch 4: firewall, SR-IOV, VFIO, CNI ---
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nft list ruleset 2>/dev/null \
+        > "${NODE_PATH}/nftables" & exec_pids+=($!)
+
+    # shellcheck disable=SC2016
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'for dev in /host/sys/bus/pci/devices/*; do if [[ -e $dev/sriov_numvfs ]]; then echo "sriov_numvfs on dev ${dev##*/}: $(cat $dev/sriov_numvfs)"; fi; done' 2>/dev/null \
+        > "${NODE_PATH}/sys_sriov_numvfs" & exec_pids+=($!)
+
+    # shellcheck disable=SC2016
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'for dev in /host/sys/bus/pci/devices/*; do if [[ -e $dev/sriov_totalvfs ]]; then echo "sriov_totalvfs on dev ${dev##*/}: $(cat $dev/sriov_totalvfs)"; fi; done' 2>/dev/null \
+        > "${NODE_PATH}/sys_sriov_totalvfs" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- ls -al /host/dev/vfio/ 2>/dev/null \
+        > "${NODE_PATH}/dev_vfio" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'if [[ -d /host/opt/cni/bin ]]; then ls -l /host/opt/cni/bin; fi' 2>/dev/null \
+        > "${NODE_PATH}/opt-cni-bin" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'if [[ -d /host/var/lib/cni/bin ]]; then ls -l /host/var/lib/cni/bin; fi' 2>/dev/null \
+        > "${NODE_PATH}/var-lib-cni-bin" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+    exec_pids=()
+
+    # --- Batch 5: NFS sysctl/sysfs, kernel red flags, NFS slot tuning ---
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- /bin/bash -c \
+        'sysctl sunrpc.tcp_slot_table_entries sunrpc.tcp_max_slot_table_entries sunrpc.udp_slot_table_entries 2>/dev/null; echo "---"; sysctl -a 2>/dev/null | grep -E "^fs\.nfs\.|^sunrpc\." | sort' \
+        > "${NODE_PATH}/nfs_sysctl" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'tcp=""; sess=""; [[ -r /host/sys/module/sunrpc/parameters/tcp_max_slot_table_entries ]] && tcp=$(cat /host/sys/module/sunrpc/parameters/tcp_max_slot_table_entries); [[ -r /host/sys/module/nfs/parameters/max_session_slots ]] && sess=$(cat /host/sys/module/nfs/parameters/max_session_slots); echo "tcp_max_slot_table_entries=${tcp}"; echo "max_session_slots=${sess}"' \
+        > "${NODE_PATH}/nfs_sysfs" & exec_pids+=($!)
+
+    timeout 120 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        "nsenter --mount=/host/proc/1/ns/mnt -- journalctl -k --no-pager -S -7d 2>/dev/null | grep -iE '${KERNEL_REDFLAG_PATTERN}' || true" \
+        > "${NODE_PATH}/kernel_red_flags.log" & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- systemctl status nfs-slot-tuning.service --no-pager \
+        > "${NODE_PATH}/nfs_slot_tuning_service" 2>&1 & exec_pids+=($!)
+
+    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
+        'stats=""; if [[ -r /host/proc/self/mountstats ]]; then stats=$(cat /host/proc/self/mountstats); fi; [[ -z "${stats}" ]] && exit 0; dev=""; while IFS= read -r line; do case "${line}" in device\ *) dev="${line}" ;; *NFSERR_DELAY*) echo "${dev}"; echo "${line}"; echo "---" ;; esac; done <<< "${stats}"' \
+        > "${NODE_PATH}/nfs_mountstats_delays" & exec_pids+=($!)
+
+    wait "${exec_pids[@]}" 2>/dev/null || true
+    exec_pids=()
+
+    # --- CNI config directories (sequential, uses oc cp) ---
+    for conf_dir in etc/cni/net.d etc/kubernetes/cni/net.d; do
+        if timeout 10 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- [ -d "/host/$conf_dir" ] 2>/dev/null; then
+            CNI_CONFIG_PATH="${NODE_PATH}/${conf_dir}"
+            mkdir -p "${CNI_CONFIG_PATH}"
+            timeout 60 oc cp "${NODE_GATHER_POD}:/host/${conf_dir}" "${CNI_CONFIG_PATH}" -n node-gather 2>/dev/null || true
+            # Remove kubeconfig files — they embed ServiceAccount tokens
+            find "${CNI_CONFIG_PATH}" -name '*.kubeconfig' -delete 2>/dev/null || true
+        fi
+    done
+
+    # --- Conditional file copies (sequential, uses oc cp) ---
+    if timeout 10 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- [ -f /host/etc/pcidp/config.json ] 2>/dev/null; then
+        timeout 60 oc cp "${NODE_GATHER_POD}:/host/etc/pcidp/config.json" "${NODE_PATH}/pcidp_config.json" -n node-gather 2>/dev/null || true
+    fi
+
+    # audit.log can be hundreds of MB; skip in incident mode, cap at 50 MB in default mode
+    if [[ -z "${TARGET_NODE}" ]]; then
+        if timeout 10 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- [ -f /host/var/log/audit/audit.log ] 2>/dev/null; then
+            timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- head -c 50000000 /host/var/log/audit/audit.log 2>/dev/null \
+                > "${NODE_PATH}/audit.log" || true
+        fi
+    fi
+
+    # --- Post-collection cleanup ---
+
+    if [[ -f "${NODE_PATH}/kernel_red_flags.log" ]] && ! [[ -s "${NODE_PATH}/kernel_red_flags.log" ]]; then
+        echo "# No kernel red-flag patterns found in the last 7 days" > "${NODE_PATH}/kernel_red_flags.log"
+    fi
+
+    echo "  [${node}] Done."
+}
+
+# --- Run per-node collection (parallel with concurrency cap) ---
+active_pids=()
+for node in ${NODES}; do
+    collect_node "${node}" &
+    active_pids+=($!)
+
+    while [[ ${#active_pids[@]} -ge ${MAX_PARALLEL_NODES} ]]; do
+        wait -n 2>/dev/null || true
+        new_pids=()
+        for pid in "${active_pids[@]}"; do
+            kill -0 "$pid" 2>/dev/null && new_pids+=("$pid")
+        done
+        active_pids=("${new_pids[@]}")
+    done
+done
+wait
+
+# --- NetworkManager journal logs (parallel across nodes) ---
+active_pids=()
+for node in ${NODES}; do
+    (
+        mkdir -p "${NODES_PATH}/${node}"
+        # shellcheck disable=SC2086
+        timeout 120 /usr/bin/oc adm node-logs ${node_log_collection_args} "${node}" -u NetworkManager \
+            > "${NODES_PATH}/${node}/${node}_logs_NetworkManager" 2>/dev/null || true
+    ) &
+    active_pids+=($!)
+
+    while [[ ${#active_pids[@]} -ge ${MAX_PARALLEL_NODES} ]]; do
+        wait -n 2>/dev/null || true
+        new_pids=()
+        for pid in "${active_pids[@]}"; do
+            kill -0 "$pid" 2>/dev/null && new_pids+=("$pid")
+        done
+        active_pids=("${new_pids[@]}")
+    done
+done
+wait
+
+# --- Cleanup ---
+if [[ "${DEPLOYED_DAEMONSET}" == "true" ]]; then
+    cleanup_daemonset
+    trap - EXIT
+fi
+
+sync

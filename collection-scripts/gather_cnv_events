@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# Collect GuestPanicked and virt-launcher LivenessProbeFailed events from VM namespaces.
+# Output: workload-scoped-resources/cnv_events/
+
+# shellcheck disable=SC2034  # COLLECTION is used by lib_env after sourcing
+COLLECTION=workload-scoped-resources
+
+# shellcheck source=lib_env
+. /usr/bin/lib_env
+
+if ! timeout 10 oc get ns "${INSTALLATION_NAMESPACE}" &>/dev/null; then
+	echo "INFO-CNV: namespace ${INSTALLATION_NAMESPACE} not found, skipping CNV guest events"
+	exit 0
+fi
+
+declare -A NS_SEEN=()
+
+_add_ns() {
+	local ns="$1"
+	[[ -z "${ns}" || "${ns}" == "null" ]] && return
+	NS_SEEN["${ns}"]=1
+}
+
+while IFS= read -r ns; do
+	_add_ns "${ns}"
+done < <(timeout 30 oc get vmi -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null | sort -u)
+
+while IFS= read -r ns; do
+	_add_ns "${ns}"
+done < <(timeout 30 oc get vm -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null | sort -u)
+
+while IFS= read -r ns; do
+	_add_ns "${ns}"
+done < <(timeout 60 oc get pods -A -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | startswith("virt-launcher-")) | .metadata.namespace' | sort -u)
+
+_add_ns "${INSTALLATION_NAMESPACE}"
+
+if [[ ${#NS_SEEN[@]} -eq 0 ]]; then
+	echo "INFO-CNV: no VM namespaces discovered, collecting ${INSTALLATION_NAMESPACE} events only"
+	NS_SEEN["${INSTALLATION_NAMESPACE}"]=1
+fi
+
+printf '%s\n' "${!NS_SEEN[@]}" | sort -u > "${DIR}/audited_namespaces.txt"
+
+while IFS= read -r ns; do
+	[[ -z "${ns}" ]] && continue
+	echo "INFO-CNV: CNV events - namespace ${ns}"
+	timeout 30 oc get events -n "${ns}" \
+		--field-selector reason=GuestPanicked \
+		-o yaml > "${DIR}/${ns}_GuestPanicked.yaml" 2>&1 || true
+
+	timeout 30 oc get events -n "${ns}" \
+		--field-selector reason=LivenessProbeFailed \
+		-o yaml > "${DIR}/${ns}_LivenessProbeFailed.yaml" 2>&1 || true
+done < <(sort -u "${DIR}/audited_namespaces.txt")
+
+timeout 30 oc get events -A --field-selector reason=GuestPanicked \
+	-o yaml > "${DIR}/all_GuestPanicked.yaml" 2>/dev/null || true
+
+timeout 30 oc get events -A --field-selector reason=LivenessProbeFailed -o wide 2>/dev/null | \
+	{ head -1; grep -E 'virt-launcher|VirtLauncher' || true; } \
+	> "${DIR}/all_LivenessProbeFailed_virt_launcher_table" || true
+
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "${DIR}/timestamp"
+
+sync

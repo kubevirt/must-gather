@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# Shared environment for collection scripts.
+# Caller sets COLLECTION before sourcing. Optionally sets NO_DIR to skip auto-mkdir.
+# Provides: NAMESPACE_PATH, DIR, NODES, _gather_profiling_node_node_exists()
+
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+# shellcheck source=common.sh
+source "${DIR_NAME}/common.sh"
+check_command
+
+if [[ -z "${COLLECTION}" ]]; then
+    COLLECTION=commands
+fi
+
+COMMANDS="$(basename "$0" | sed 's/^gather_//')"
+NAMESPACE_PATH="${BASE_COLLECTION_PATH}/${COLLECTION}"
+DIR="${NAMESPACE_PATH}/${COMMANDS}"
+
+[[ -z "${NO_DIR}" ]] && mkdir -p "${DIR}"
+
+# shellcheck disable=SC2034  # NODES is used by scripts that source lib_env
+NODES="$(timeout 30 oc get nodes -o jsonpath='{.items[?(@.kind=="Node")].metadata.name}')"
+
+_gather_profiling_node_node_exists() {
+    local node="$1"
+    timeout 10 oc get node "$node" > /dev/null 2>&1
+}

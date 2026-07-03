@@ -188,8 +188,8 @@ fi
 
 cleanup_node_gather() {
     echo "Cleaning up node-gather resources..."
-    timeout 30 /usr/bin/oc delete -f "${DAEMONSET_MANIFEST}" 2>/dev/null
-    timeout 30 /usr/bin/oc delete -f "${CRD_MANIFEST}" 2>/dev/null
+    timeout 30 /usr/bin/oc delete -f "${DAEMONSET_MANIFEST}" --wait=false 2>/dev/null
+    timeout 30 /usr/bin/oc delete -f "${CRD_MANIFEST}" --wait=false 2>/dev/null
 }
 
 NODE_GATHER_POD=""
@@ -243,114 +243,12 @@ timeout 120 /usr/bin/oc adm node-logs "${INCIDENT_NODE}" -u kubelet --since="${S
 echo "  Collecting node definition..."
 timeout 120 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" node/"${INCIDENT_NODE}" 2>&1 &
 
-# Collect data via node-gather pod (privileged host access).
-# Uses nsenter to access host binaries (the daemonset mounts individual dirs, not the full root,
-# so chroot /host cannot find binaries under /usr).
-# The pod has hostNetwork:true so ip/ss can run directly for network info.
-# Exec calls are batched (max 5 concurrent) to avoid overwhelming kubelet streaming limits.
-NODE_GATHER_FILES=(dmesg dmidecode lspci cmdline mountstats diskstats pressure_io pressure_memory pressure_cpu df mounts sysctl nfs_module_params tuned_active_profile tuned_modprobe nfs.conf nfs_modprobe chrony ip_addr kernel_red_flags.log)
 if [[ -n "${NODE_GATHER_POD}" ]]; then
-    exec_pids=()
-
-    echo "  Collecting dmesg..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- dmesg 2>/dev/null \
-        > "${NODE_PATH}/dmesg" & exec_pids+=($!)
-
-    echo "  Collecting dmidecode (CPU microcode, BIOS, hardware)..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- dmidecode 2>/dev/null \
-        > "${NODE_PATH}/dmidecode" & exec_pids+=($!)
-
-    echo "  Collecting PCI devices (passthrough, IOMMU, firmware)..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- lspci -vv 2>/dev/null \
-        > "${NODE_PATH}/lspci" & exec_pids+=($!)
-
-    echo "  Collecting kernel boot parameters..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/cmdline 2>/dev/null \
-        > "${NODE_PATH}/cmdline" & exec_pids+=($!)
-
-    echo "  Collecting mount info..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/self/mountstats 2>/dev/null \
-        > "${NODE_PATH}/mountstats" & exec_pids+=($!)
-
-    echo "  Collecting disk stats..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/diskstats 2>/dev/null \
-        > "${NODE_PATH}/diskstats" & exec_pids+=($!)
-
-    echo "  Collecting I/O pressure..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/io 2>/dev/null \
-        > "${NODE_PATH}/pressure_io" & exec_pids+=($!)
-
-    wait "${exec_pids[@]}" 2>/dev/null || true
-    exec_pids=()
-
-    echo "  Collecting memory pressure..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/memory 2>/dev/null \
-        > "${NODE_PATH}/pressure_memory" & exec_pids+=($!)
-
-    echo "  Collecting CPU pressure..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/pressure/cpu 2>/dev/null \
-        > "${NODE_PATH}/pressure_cpu" & exec_pids+=($!)
-
-    echo "  Collecting filesystem usage..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- df -h 2>/dev/null \
-        > "${NODE_PATH}/df" & exec_pids+=($!)
-
-    echo "  Collecting mount table..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/proc/mounts 2>/dev/null \
-        > "${NODE_PATH}/mounts" & exec_pids+=($!)
-
-    echo "  Collecting kernel tunables (sysctl)..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- sysctl -a 2>/dev/null \
-        > "${NODE_PATH}/sysctl" & exec_pids+=($!)
-
-    wait "${exec_pids[@]}" 2>/dev/null || true
-    exec_pids=()
-
-    echo "  Collecting NFS module parameters..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
-        'for f in /host/sys/module/nfs/parameters/*; do echo "$(basename "$f") = $(cat "$f" 2>/dev/null)"; done; for f in /host/sys/module/nfsd/parameters/* 2>/dev/null; do echo "nfsd/$(basename "$f") = $(cat "$f" 2>/dev/null)"; done' 2>/dev/null \
-        > "${NODE_PATH}/nfs_module_params" & exec_pids+=($!)
-
-    echo "  Collecting tuned profile..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- tuned-adm active 2>/dev/null \
-        > "${NODE_PATH}/tuned_active_profile" & exec_pids+=($!)
-
-    echo "  Collecting tuned modprobe config..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/etc/modprobe.d/tuned.conf 2>/dev/null \
-        > "${NODE_PATH}/tuned_modprobe" & exec_pids+=($!)
-
-    echo "  Collecting NFS client config..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- cat /host/etc/nfs.conf 2>/dev/null \
-        > "${NODE_PATH}/nfs.conf" & exec_pids+=($!)
-
-    echo "  Collecting NFS modprobe config..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
-        'for f in /host/etc/modprobe.d/*.conf; do [ -f "$f" ] || continue; echo "=== $(basename "$f") ==="; cat "$f"; done' 2>/dev/null \
-        > "${NODE_PATH}/nfs_modprobe" & exec_pids+=($!)
-
-    wait "${exec_pids[@]}" 2>/dev/null || true
-    exec_pids=()
-
-    echo "  Collecting time synchronization (chrony)..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- chronyc -m sources tracking 2>/dev/null \
-        > "${NODE_PATH}/chrony" & exec_pids+=($!)
-
-    echo "  Collecting IP configuration..."
-    timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- ip a 2>/dev/null \
-        > "${NODE_PATH}/ip_addr" & exec_pids+=($!)
-
-    echo "  Scanning kernel logs for red-flag indicators..."
-    timeout 120 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- /bin/bash -c \
-        'nsenter --mount=/host/proc/1/ns/mnt -- journalctl -k --no-pager -S -7d 2>/dev/null | grep -iE "nfs:|NFS |nfs |qemu|QEMU|Out of memory|oom-kill|Killed process.*qemu|task .* blocked|blocked for more than|stuck for" || true' \
-        > "${NODE_PATH}/kernel_red_flags.log" & exec_pids+=($!)
-
-    wait "${exec_pids[@]}" 2>/dev/null || true
+    echo "Collecting node diagnostics..."
+    USR_BIN_GATHER=1 TARGET_NODE="${INCIDENT_NODE}" NODE_GATHER_POD="${NODE_GATHER_POD}" \
+        "${DIR_NAME}/gather_nodes"
 else
-    skipped "dmidecode, mountstats, diskstats, pressure (cpu/io/memory), df, mounts, sysctl, tuned, nfs config, chrony, ip, kernel red-flags (node-gather pod not available)"
-    collected "dmesg (via oc adm node-logs fallback)"
-    echo "  WARNING: node-gather pod not available, falling back to oc adm node-logs for dmesg."
-    timeout 120 /usr/bin/oc adm node-logs "${INCIDENT_NODE}" -u kernel --since="${SINCE_NODE_LOGS}" \
-        > "${NODE_PATH}/dmesg" 2>&1 &
+    echo "WARNING: No node-gather pod available, skipping node diagnostics."
 fi
 
 wait
@@ -359,29 +257,22 @@ wait
 cleanup_node_gather
 trap - EXIT
 
-# Remove empty node-gather files and report what was actually collected
-if [[ -n "${NODE_GATHER_POD}" ]]; then
-    # Add sentinel to kernel_red_flags.log if empty (no matches is meaningful, not an error)
-    if [[ -f "${NODE_PATH}/kernel_red_flags.log" ]] && ! [[ -s "${NODE_PATH}/kernel_red_flags.log" ]]; then
-        echo "# No kernel red-flag patterns found in the last 7 days" > "${NODE_PATH}/kernel_red_flags.log"
+# Report what gather_nodes actually collected
+NODE_DIAG_FILES=(dmesg dmidecode lspci cmdline mountstats diskstats pressure_io pressure_memory pressure_cpu df mounts sysctl nfs_module_params tuned_active_profile tuned_modprobe nfs.conf nfs_modprobe chrony ip_addr kernel_red_flags.log nfs_sysctl nfs_sysfs nfs_slot_tuning_service nfs_mountstats_delays bridge vlan nftables sys_sriov_numvfs sys_sriov_totalvfs dev_vfio opt-cni-bin var-lib-cni-bin pcidp_config.json audit.log)
+local_collected=()
+local_skipped=()
+for f in "${NODE_DIAG_FILES[@]}"; do
+    if [[ -s "${NODE_PATH}/${f}" ]]; then
+        local_collected+=("${f}")
+    else
+        local_skipped+=("${f}")
     fi
-
-    local_collected=()
-    local_skipped=()
-    for f in "${NODE_GATHER_FILES[@]}"; do
-        if [[ -s "${NODE_PATH}/${f}" ]]; then
-            local_collected+=("${f}")
-        else
-            rm -f "${NODE_PATH}/${f}"
-            local_skipped+=("${f}")
-        fi
-    done
-    if [[ ${#local_collected[@]} -gt 0 ]]; then
-        collected "$(IFS=', '; echo "${local_collected[*]}") (via node-gather pod)"
-    fi
-    if [[ ${#local_skipped[@]} -gt 0 ]]; then
-        skipped "$(IFS=', '; echo "${local_skipped[*]}") (not available on this host)"
-    fi
+done
+if [[ ${#local_collected[@]} -gt 0 ]]; then
+    collected "$(IFS=', '; echo "${local_collected[*]}") (node diagnostics)"
+fi
+if [[ ${#local_skipped[@]} -gt 0 ]]; then
+    skipped "$(IFS=', '; echo "${local_skipped[*]}") (not available on this host)"
 fi
 
 # --- Cluster Health Snapshot ---
@@ -566,11 +457,13 @@ if [[ -n "${LAUNCHER_POD}" ]]; then
         timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domblkerror "${NS}_${VM}" \
             > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domblkerror" 2>&1
 
+        # Cap QEMU log transfer at 50 MB to prevent archive bloat on long-running VMs
         timeout 60 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- \
             tar --ignore-failed-read -cf - \
             "/var/log/libvirt/qemu/" \
             "/var/run/libvirt/qemu/log/" \
             "/var/run/kubevirt-private/libvirt/qemu/log/" 2>/dev/null \
+            | head -c 50000000 \
             | tar -C "${VM_DETAIL_PATH}" \
                 --transform 'flags=r;s|^var/log/libvirt/qemu/||' \
                 --transform 'flags=r;s|^var/run/libvirt/qemu/log/|runlog_|' \
@@ -709,7 +602,7 @@ echo "Collected data locations:"
 echo "  Node logs:      nodes/${INCIDENT_NODE}/"
 echo "  Node hardware:  nodes/${INCIDENT_NODE}/{dmidecode,lspci,cmdline}"
 echo "  Node storage:   nodes/${INCIDENT_NODE}/{mountstats,diskstats,pressure_*,df,mounts}"
-echo "  Node tunables:  nodes/${INCIDENT_NODE}/{sysctl,nfs_module_params,nfs.conf,nfs_modprobe,tuned_*}"
+echo "  Node tunables:  nodes/${INCIDENT_NODE}/{sysctl,nfs_*,nfs.conf,tuned_*}"
 echo "  Node network:   nodes/${INCIDENT_NODE}/ip_addr"
 echo "  Node time:      nodes/${INCIDENT_NODE}/chrony"
 echo "  Kernel flags:   nodes/${INCIDENT_NODE}/kernel_red_flags.log"
