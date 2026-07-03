@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# Collect GuestPanicked and virt-launcher LivenessProbeFailed events from VM namespaces.
+# Used by ocp-check check_4_8_4_2_windows_bsod_risk_posture (Windows BSOD historical signals).
+
+COLLECTION=workload-scoped-resources
+
+. /usr/bin/lib_env
+
+OUT="${DIR}/events"
+mkdir -p "${OUT}"
+
+if ! oc get ns openshift-cnv &>/dev/null; then
+	echo "INFO-CNV: OpenShift Virtualization (openshift-cnv) not found, skipping CNV guest events"
+	exit 0
+fi
+
+declare -A NS_SEEN=()
+
+_add_ns() {
+	local ns="$1"
+	[[ -z "${ns}" || "${ns}" == "null" ]] && return
+	NS_SEEN["${ns}"]=1
+}
+
+while IFS= read -r ns; do
+	_add_ns "${ns}"
+done < <(oc get vmi -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null | sort -u)
+
+while IFS= read -r ns; do
+	_add_ns "${ns}"
+done < <(oc get vm -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null | sort -u)
+
+while IFS= read -r ns; do
+	_add_ns "${ns}"
+done < <(oc get pods -A -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | startswith("virt-launcher-")) | .metadata.namespace' | sort -u)
+
+_add_ns "openshift-cnv"
+
+if [[ ${#NS_SEEN[@]} -eq 0 ]]; then
+	echo "INFO-CNV: no VM namespaces discovered, collecting openshift-cnv events only"
+	NS_SEEN["openshift-cnv"]=1
+fi
+
+printf '%s\n' "${!NS_SEEN[@]}" | sort -u > "${OUT}/audited_namespaces.txt"
+
+for ns in $(sort -u "${OUT}/audited_namespaces.txt"); do
+	echo "INFO-CNV: CNV events - namespace ${ns}"
+	oc get events -n "${ns}" \
+		--field-selector reason=GuestPanicked \
+		-o yaml &>"${OUT}/${ns}_GuestPanicked.yaml" || true
+
+	oc get events -n "${ns}" \
+		--field-selector reason=LivenessProbeFailed \
+		-o yaml &>"${OUT}/${ns}_LivenessProbeFailed.yaml" || true
+done
+
+oc get events -A --field-selector reason=GuestPanicked \
+	-o yaml &>"${OUT}/all_GuestPanicked.yaml" 2>/dev/null || true
+
+oc get events -A --field-selector reason=LivenessProbeFailed -o wide 2>/dev/null | \
+	{ head -1; grep -E 'virt-launcher|VirtLauncher' || true; } \
+	&>"${OUT}/all_LivenessProbeFailed_virt_launcher_table" || true
+
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "${OUT}/timestamp"
+
+sync
