@@ -141,6 +141,8 @@ function run_vm_incident {
   fi
   echo "running gather_vm_incident"
   USR_BIN_GATHER=1 "${DIR_NAME}/gather_vm_incident"
+  echo "running gather_virtio_driver_check"
+  USR_BIN_GATHER=1 "${DIR_NAME}/gather_virtio_driver_check"
 }
 
 function run_scripts {
