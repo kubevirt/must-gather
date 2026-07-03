@@ -212,21 +212,26 @@ checked=0
 outdated_count=0
 skipped=0
 
-# If NS and VM are set, check only that VM. Otherwise check all running VMs.
 if [[ -n "${NS:-}" && -n "${VM:-}" ]]; then
+    echo "Checking VM ${VM} in namespace ${NS}"
     mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod -n "${NS}" \
         -l "kubevirt.io=virt-launcher" \
         --field-selector=status.phase=Running \
         --no-headers \
         -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
         | awk -v vm="${VM}" '$3 == vm {print $1 " " $2 " " $3}')
-else
+elif [[ "${VIRTIO_DRIVER_CHECK_ALL:-}" == "true" ]]; then
+    echo "Checking all running VMs"
     mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod --all-namespaces \
         -l kubevirt.io=virt-launcher \
         --field-selector=status.phase=Running \
         --no-headers \
         -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
         | awk '{print $1 " " $2 " " $3}')
+else
+    echo "ERROR: No target specified. Set NS and VM, or VIRTIO_DRIVER_CHECK_ALL=true." >&2
+    jq -n '{"error": "no target specified"}' > "${DRIVER_CHECK_PATH}/summary.json"
+    exit 0
 fi
 
 if [[ ${#PODS[@]} -eq 1 && -z "${PODS[0]}" ]]; then
