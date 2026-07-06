@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# v 1.0
+
+if [ -z ${COLLECTION} ]
+then
+   COLLECTION=commands
+fi
+
+COMMANDS=$(echo $0 | cut -d'_' -f3-)
+BASE_COLLECTION_PATH="/must-gather"
+NAMESPACE_PATH=${BASE_COLLECTION_PATH}/${COLLECTION}
+DIR=${NAMESPACE_PATH}/${COMMANDS}/
+
+[ -z $NO_DIR ] && mkdir -p ${DIR}
+
+NODES="$(oc get nodes -o jsonpath='{.items[?(@.kind=="Node")].metadata.name}')"
+
+# _gather_profiling_node_node_exists $NODE
+# returns "true" if $NODE is found among the cluster nodes, "false" otherwise.
+_gather_profiling_node_node_exists() {
+    local node="$1"
+
+    oc get node "$node" > /dev/null 2>&1
+    return "$?"
+}
+
+
+
+# Prometheus stuff
+minorVersion=$(oc version | grep "Server" | awk -F ":" '{print $2}' | awk -F "." '{print $2}')
+if (( ${minorVersion} < 12 )); then
+   prometheusTokenCommand="oc sa get-token prometheus-k8s -n openshift-monitoring"
+else
+   prometheusTokenCommand="oc create token prometheus-k8s -n openshift-monitoring"
+fi
+
+#PROMETHEUS_ROUTE=$(oc -n openshift-monitoring get routes | grep prometheus-k8s-openshift-monitoring | awk '{print $2}')
+PROMETHEUS_ROUTE='prometheus-k8s.openshift-monitoring.svc.cluster.local:9091'
+
+

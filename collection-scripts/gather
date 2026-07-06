@@ -19,6 +19,12 @@ function main() {
     "webhooks"
     "instancetypes"
     "virtualization"
+    "clusterroles"
+    "cnv_events"
+    "nfs_node_tuning"
+    "prometheus_instant"
+    "windows_nodes"
+    "worker_kernel_log"
   )
   declare requested_scripts=("${mandatory_scripts[@]}")
 

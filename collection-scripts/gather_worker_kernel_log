@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# Kernel log indicators for CNV/BSOD host-side diagnosis (NFS, QEMU OOM, stalled tasks).
+# Output: nodes/<node>/kernel_bsod_indicators.log
+
+COLLECTION=nodes
+NO_DIR=YES
+
+. /usr/bin/lib_env
+
+PATTERN='nfs:|NFS |nfs |NFSERR|server not responding|zero writ|call_transmit|cb path stale|not responding for|qemu|QEMU|Out of memory|oom-kill|Killed process.*qemu|task .* blocked|blocked for more than|stuck for|jiffies'
+
+for node in ${NODES}; do
+	echo "INFO-CNV: kernel BSOD indicators - node ${node}"
+	if ! _gather_profiling_node_node_exists "$node"; then
+		echo "ERROR-PG: node ${node} not found in the cluster"
+		continue
+	fi
+	mkdir -p "${NAMESPACE_PATH}/${node}"
+	oc debug "node/${node}" -- chroot /host journalctl -k --no-pager -S -7d 2>/dev/null | \
+		grep -iE "${PATTERN}" >"${NAMESPACE_PATH}/${node}/kernel_bsod_indicators.log" || true
+	if [[ ! -s "${NAMESPACE_PATH}/${node}/kernel_bsod_indicators.log" ]]; then
+		oc debug "node/${node}" -- chroot /host dmesg 2>/dev/null | \
+			grep -iE "${PATTERN}" >>"${NAMESPACE_PATH}/${node}/kernel_bsod_indicators.log" || true
+	fi
+done
+
+sync

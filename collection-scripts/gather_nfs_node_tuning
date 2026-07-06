@@ -1,0 +1,88 @@
+#!/bin/bash
+
+# NFS client sysctl, sysfs module params, slot-tuning service, and boot config per node.
+# Read-only collection: cat/sysctl/status only — no modprobe, no writes, no cordon/drain/reboot.
+# Output: nodes/<node>/nfs_* ; nodes/nfs_tuning_machineconfig_names.txt
+
+COLLECTION=nodes
+NO_DIR=YES
+
+. /usr/bin/lib_env
+
+echo "INFO-CNV: NFS tuning MachineConfigs (cluster index)"
+mapfile -t NFS_MC_NAMES < <(oc get machineconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | \
+	grep -iE 'nfs-tuning|nfs-slot-tuning' | sort -u)
+printf '%s\n' "${NFS_MC_NAMES[@]}" >"${NAMESPACE_PATH}/nfs_tuning_machineconfig_names.txt"
+
+echo "INFO-CNV: cluster-monitoring-config (mountstats collector audit)"
+oc get cm cluster-monitoring-config -n openshift-monitoring -o yaml 2>/dev/null \
+	>"${NAMESPACE_PATH}/nfs_cluster_monitoring_config.yaml" || true
+
+for node in ${NODES}; do
+	echo "INFO-CNV: NFS node tuning - ${node}"
+	if ! _gather_profiling_node_node_exists "$node"; then
+		echo "ERROR-PG: node ${node} not found in the cluster"
+		continue
+	fi
+	mkdir -p "${NAMESPACE_PATH}/${node}"
+
+	oc debug "node/${node}" -- chroot /host /bin/bash -c '
+		sysctl sunrpc.tcp_slot_table_entries sunrpc.tcp_max_slot_table_entries sunrpc.udp_slot_table_entries 2>/dev/null
+		echo "---"
+		sysctl -a 2>/dev/null | grep -E "^fs\.nfs\.|^sunrpc\." | sort
+	' >"${NAMESPACE_PATH}/${node}/nfs_sysctl.txt" 2>/dev/null || true
+
+	oc debug "node/${node}" -- chroot /host /bin/bash -c '
+		tcp=""
+		sess=""
+		[[ -r /sys/module/sunrpc/parameters/tcp_max_slot_table_entries ]] && \
+			tcp=$(cat /sys/module/sunrpc/parameters/tcp_max_slot_table_entries)
+		[[ -r /sys/module/nfs/parameters/max_session_slots ]] && \
+			sess=$(cat /sys/module/nfs/parameters/max_session_slots)
+		echo "tcp_max_slot_table_entries=${tcp}"
+		echo "max_session_slots=${sess}"
+	' >"${NAMESPACE_PATH}/${node}/nfs_sysfs.txt" 2>/dev/null || true
+
+	oc debug "node/${node}" -- chroot /host systemctl status nfs-slot-tuning.service --no-pager 2>&1 \
+		>"${NAMESPACE_PATH}/${node}/nfs_slot_tuning_service.txt" || true
+
+	oc debug "node/${node}" -- chroot /host /bin/bash -c '
+		for f in /etc/modprobe.d/*.conf /etc/modprobe.d/nfsclient.conf; do
+			[[ -f "$f" ]] || continue
+			echo "=== $f ==="
+			cat "$f"
+		done
+		grep -R -h -E "max_session_slots|options nfs" /etc/modprobe.d/ 2>/dev/null || true
+	' >"${NAMESPACE_PATH}/${node}/nfs_modprobe.txt" 2>/dev/null || true
+
+	oc debug "node/${node}" -- chroot /host cat /etc/nfs.conf 2>/dev/null \
+		>"${NAMESPACE_PATH}/${node}/nfs.conf" || true
+
+	oc debug "node/${node}" -- chroot /host cat /proc/cmdline 2>/dev/null \
+		>"${NAMESPACE_PATH}/${node}/cmdline.txt" || true
+
+	oc debug "node/${node}" -- chroot /host /bin/bash -c '
+		stats=""
+		if command -v mountstats >/dev/null 2>&1; then
+			stats=$(mountstats -n 2>/dev/null)
+		elif [[ -r /proc/self/mountstats ]]; then
+			stats=$(cat /proc/self/mountstats)
+		fi
+		[[ -z "${stats}" ]] && exit 0
+		dev=""
+		while IFS= read -r line; do
+			case "${line}" in
+				device\ *) dev="${line}" ;;
+				*NFSERR_DELAY*)
+					echo "${dev}"
+					echo "${line}"
+					echo "---"
+					;;
+			esac
+		done <<< "${stats}"
+	' >"${NAMESPACE_PATH}/${node}/nfs_mountstats_delays.txt" 2>/dev/null || true
+done
+
+date -u +"%Y-%m-%dT%H:%M:%SZ" >"${NAMESPACE_PATH}/nfs_tuning_timestamp.txt"
+
+sync
