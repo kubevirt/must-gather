@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# ClusterRole definitions for cluster-reader posture (CNV / KubeVirt RBAC baseline).
+# Output: cluster-scoped-resources/rbac.authorization.k8s.io/clusterroles/
+
+# shellcheck disable=SC2034  # COLLECTION is used by lib_env after sourcing
+COLLECTION=cluster-scoped-resources/rbac.authorization.k8s.io
+
+# shellcheck source=lib_env
+. /usr/bin/lib_env
+
+mkdir -p "${DIR}/aggregated"
+
+echo "INFO-CNV: clusterrole cluster-reader"
+timeout 30 oc get clusterrole cluster-reader -o yaml > "${DIR}/cluster-reader.yaml" 2>&1 || true
+
+echo "INFO-CNV: clusterroles aggregated to cluster-reader"
+mapfile -t AGG_ROLES < <(timeout 30 oc get clusterroles -l rbac.authorization.k8s.io/aggregate-to-cluster-reader=true -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sort -u)
+printf '%s\n' "${AGG_ROLES[@]}" > "${DIR}/aggregated_role_names.txt"
+for role in "${AGG_ROLES[@]}"; do
+	[[ -z "${role}" ]] && continue
+	echo "INFO-CNV: aggregated clusterrole ${role}"
+	timeout 30 oc get clusterrole "${role}" -o yaml > "${DIR}/aggregated/${role}.yaml" 2>&1 || true
+done
+
+echo "INFO-CNV: CNV/kubevirt-related clusterroles"
+mapfile -t CNV_ROLES < <(timeout 30 oc get clusterroles -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | \
+	grep -iE 'kubevirt|hyperconverged|cnv|virt-api|virt-controller|virt-handler|hostpath-provisioner|kubevirt-hyperconverged' | sort -u)
+printf '%s\n' "${CNV_ROLES[@]}" > "${DIR}/cnv_related_role_names.txt"
+mkdir -p "${DIR}/cnv_related"
+for role in "${CNV_ROLES[@]}"; do
+	[[ -z "${role}" ]] && continue
+	echo "INFO-CNV: cnv clusterrole ${role}"
+	timeout 30 oc get clusterrole "${role}" -o yaml > "${DIR}/cnv_related/${role}.yaml" 2>&1 || true
+done
+
+echo "INFO-CNV: clusterrolebindings referencing cluster-reader"
+timeout 30 oc get clusterrolebindings -o json 2>/dev/null | jq -r '
+  .items[]
+  | select(.roleRef.name == "cluster-reader")
+  | [.metadata.name, (.subjects[]? | (.kind + "/" + .name + (if .namespace then "@" + .namespace else "" end)))]
+  | @tsv
+' > "${DIR}/cluster_reader_binding_subjects.tsv" 2>/dev/null || true
+
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "${DIR}/timestamp"
+
+sync

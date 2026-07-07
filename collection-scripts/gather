@@ -19,11 +19,22 @@ function main() {
     "webhooks"
     "instancetypes"
     "virtualization"
+    "cnv_events"
+    "prometheus_instant"
+    "clusterroles"
+    "windows_nodes"
   )
   declare requested_scripts=("${mandatory_scripts[@]}")
+  VM_INCIDENT=false
+  export INCIDENT_TIME=""
 
   parse_flags "$@"
-  run_scripts
+
+  if [[ "${VM_INCIDENT}" == "true" ]]; then
+    run_vm_incident
+  else
+    run_scripts
+  fi
   run_logs
 
   sync
@@ -43,6 +54,12 @@ function parse_flags {
       --vms_details)
         requested_scripts+=("vms_details")
         requested_scripts+=("vms_namespaces")
+        ;;
+      --vm-incident)
+        VM_INCIDENT=true
+        ;;
+      --incident-time=*)
+        INCIDENT_TIME="${1#*=}"
         ;;
       --)
         shift
@@ -80,7 +97,46 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   > or more of the following parameters:
   --images
   --vms_details
+
+  > Incident collection for a specific VM at a known time.
+  > Unlike a full must-gather, this collects ONLY data pertinent to the
+  > incident: right VM, right node, right time window. No cluster-wide
+  > noise. Timeboxed to 10 minutes.
+  --vm-incident --incident-time=<RFC3339 timestamp>
+    Requires NS and VM environment variables. Skips all other collectors.
+    Automatically identifies the node via Prometheus metrics and collects:
+    - Host: dmesg, journal, kubelet, dmidecode, sysctl, chrony, ip config,
+      storage diagnostics (mountstats, diskstats, PSI), NFS config, kernel red-flags
+    - Cluster: ClusterOperators, nodes, MachineConfigPools, KubeVirt version,
+      VMIs on incident node (noisy-neighbor detection)
+    - VM: definitions, PVC/PV/StorageClass/DataVolume chain, namespace events
+    - Metrics: VM and node performance metrics from Prometheus (CPU, memory, I/O,
+      network, PSI, alerts) in OpenMetrics format, ready for backfill
+    - Pods: time-scoped virt-launcher/virt-handler logs + previous container logs
+    - Live state: virsh data, serial console log, QEMU logs, cgroup/OOM stats
+      (only if VM has not restarted since incident)
+    Example:
+      oc adm must-gather --image=quay.io/kubevirt/must-gather \\
+        -- NS=myns VM=myvm \\
+        /usr/bin/gather --vm-incident --incident-time=2026-06-06T06:06:00Z
 "
+}
+
+function run_vm_incident {
+  if [[ -z "${NS:-}" ]]; then
+    echo "ERROR: --vm-incident requires the NS environment variable to be set" >&2
+    exit 1
+  fi
+  if [[ -z "${VM:-}" ]]; then
+    echo "ERROR: --vm-incident requires the VM environment variable to be set" >&2
+    exit 1
+  fi
+  if [[ -z "${INCIDENT_TIME}" ]]; then
+    echo "ERROR: --vm-incident requires --incident-time=<RFC3339 timestamp>" >&2
+    exit 1
+  fi
+  echo "running gather_vm_incident"
+  USR_BIN_GATHER=1 "${DIR_NAME}/gather_vm_incident"
 }
 
 function run_scripts {

@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Windows worker node posture data.
+# Output: workload-scoped-resources/windows_nodes/
+
+# shellcheck disable=SC2034  # COLLECTION is used by lib_env after sourcing
+COLLECTION=workload-scoped-resources
+
+# shellcheck source=lib_env
+. /usr/bin/lib_env
+
+mapfile -t WIN_NODES < <(timeout 30 oc get nodes -l node.openshift.io/os_id=Windows -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sort -u)
+
+if [[ ${#WIN_NODES[@]} -eq 0 ]]; then
+	echo "INFO-CNV: no Windows worker nodes found, skipping windows_nodes collection"
+	exit 0
+fi
+
+mkdir -p "${DIR}/nodes" "${DIR}/events"
+
+printf '%s\n' "${WIN_NODES[@]}" > "${DIR}/windows_node_names.txt"
+
+for node in "${WIN_NODES[@]}"; do
+	echo "INFO-CNV: windows node snapshot - ${node}"
+	timeout 30 oc get node "${node}" -o yaml > "${DIR}/nodes/${node}.yaml" 2>&1 || true
+done
+
+if timeout 10 oc get ns openshift-windows-machine-config-operator &>/dev/null; then
+	echo "INFO-CNV: WMCO namespace events"
+	timeout 30 oc get events -n openshift-windows-machine-config-operator \
+		--field-selector type=Warning \
+		-o yaml > "${DIR}/events/wmco_warning_events.yaml" 2>&1 || true
+
+	timeout 30 oc get pods -n openshift-windows-machine-config-operator -o wide \
+		> "${DIR}/wmco_pods_wide.txt" 2>&1 || true
+
+	timeout 30 oc get csv -n openshift-windows-machine-config-operator -o yaml \
+		> "${DIR}/wmco_clusterserviceversions.yaml" 2>/dev/null || true
+else
+	echo "INFO-CNV: openshift-windows-machine-config-operator namespace not found"
+fi
+
+for node in "${WIN_NODES[@]}"; do
+	echo "INFO-CNV: node-scoped events - ${node}"
+	timeout 30 oc get events -A --field-selector "involvedObject.name=${node}" \
+		-o yaml > "${DIR}/events/node_${node}_events.yaml" 2>/dev/null || true
+done
+
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "${DIR}/timestamp"
+
+sync

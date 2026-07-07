@@ -5,6 +5,9 @@ export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
 export PROS=${PROS:-5}
 export INSTALLATION_NAMESPACE=${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}
 
+# Shared kernel red-flag grep pattern — used by gather_nodes and gather_vm_incident
+export KERNEL_REDFLAG_PATTERN='nfs:|NFS |nfs |NFSERR|server not responding|zero writ|call_transmit|cb path stale|not responding for|qemu|QEMU|Out of memory|oom-kill|Killed process.*qemu|task .* blocked|blocked for more than|stuck for|jiffies'
+
 function check_command {
     if [[ -z "$USR_BIN_GATHER" ]]; then
         echo "This script should not be directly executed." 1>&2
@@ -44,4 +47,41 @@ get_log_collection_args() {
 	fi
 	export log_collection_args
 	export node_log_collection_args
+}
+
+query_prometheus() {
+	local query="$1"
+	local time="$2"
+	local token
+	local _xtrace
+	_xtrace=$(shopt -po xtrace 2>/dev/null) || true
+	{ set +x; } 2>/dev/null
+	token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+	local result
+	result=$(timeout 20 curl -ksg --connect-timeout 5 --max-time 15 -G \
+		-H "Authorization: Bearer ${token}" \
+		--data-urlencode "query=${query}" \
+		--data-urlencode "time=${time}" \
+		"https://thanos-querier.openshift-monitoring.svc:9091/api/v1/query" 2>/dev/null)
+	echo "${result}"
+	eval "$_xtrace"
+}
+
+query_prometheus_range() {
+	local query="$1" start="$2" end="$3" step="${4:-30s}"
+	local token
+	local _xtrace
+	_xtrace=$(shopt -po xtrace 2>/dev/null) || true
+	{ set +x; } 2>/dev/null
+	token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+	local result
+	result=$(timeout 35 curl -ksg --connect-timeout 5 --max-time 30 -G \
+		-H "Authorization: Bearer ${token}" \
+		--data-urlencode "query=${query}" \
+		--data-urlencode "start=${start}" \
+		--data-urlencode "end=${end}" \
+		--data-urlencode "step=${step}" \
+		"https://thanos-querier.openshift-monitoring.svc:9091/api/v1/query_range" 2>/dev/null)
+	echo "${result}"
+	eval "$_xtrace"
 }

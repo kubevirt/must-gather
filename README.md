@@ -15,6 +15,11 @@ You will get a dump of:
 - The Hyperconverged Cluster Operator namespaces (and its children objects)
 - All namespaces (and their children objects) that belong to any KubeVirt resources
 - All KubeVirt CRD's definitions
+- Per-node system and storage diagnostics (dmesg, dmidecode, sysctl, NFS config, PSI counters, kernel red-flag scan)
+- CNV guest events (GuestPanicked, LivenessProbeFailed) across VM namespaces
+- Prometheus instant metrics (cluster utilization, VM phases, storage latencies, NFS counters)
+- ClusterRole definitions (cluster-reader posture, KubeVirt RBAC baseline)
+- Windows worker node posture data (when Windows nodes are present)
 
 By default, the VMs definitions won't be included, but only the VM Instances' custom resources.
 
@@ -69,11 +74,28 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   > - ssp
   > - virtualmachines
   > - webhooks
+  > - instancetypes
+  > - virtualization
+  > - cnv_events
+  > - prometheus_instant
+  > - clusterroles
+  > - windows_nodes
 
   > You can also choose to enable optional collectors combining one
   > or more of the following parameters:
   --images
   --vms_details
+
+  > Incident collection for a specific VM at a known time.
+  > Unlike a full must-gather, this collects ONLY data pertinent to the
+  > incident: right VM, right node, right time window. No cluster-wide
+  > noise. Timeboxed to 10 minutes.
+  --vm-incident --incident-time=<RFC3339 timestamp>
+    Requires NS and VM environment variables. Skips all other collectors.
+    Example:
+      oc adm must-gather --image=quay.io/kubevirt/must-gather \
+        -- NS=myns VM=myvm \
+        /usr/bin/gather --vm-incident --incident-time=2026-06-06T06:06:00Z
 ```
 
 ### Parallelism
@@ -167,6 +189,167 @@ oc adm must-gather \
 
 ***Note***: When collecting information using the `VM` variable, the command will ignore the `VM_EPR` variable. Do not use both of them together.
 
+
+### VM incident collection
+
+When a VM crashes (BSOD, kernel panic, I/O hang), the information needed for root-cause
+analysis is typically scattered across four separate collection tools:
+
+| What you need | Where it lives today |
+|---|---|
+| VM definitions, virt-launcher logs, virsh state | CNV must-gather (`--vms_details`) |
+| Node journal, kubelet logs, ClusterOperators | OCP must-gather |
+| dmesg, dmidecode, NFS config, sysctl, PSI counters | sosreport on the node |
+| CPU/memory/storage/network metrics over time | Manual Prometheus queries or screenshots |
+
+Collecting all four can take hours, produces gigabytes of cluster-wide data, and still
+requires a support engineer to manually correlate the right node, the right time window,
+and the right VM across all of them. Logs are often captured from "now" rather than from
+when the incident occurred, missing the relevant entries entirely.
+
+The `--vm-incident` flag replaces this with a **single command** that collects only the data
+pertinent to one VM incident at a known time. You provide the VM name, namespace, and when
+the incident happened. The tool automatically identifies the right node (via Prometheus
+`kubevirt_vmi_info`, so it works even if the VM has since migrated), scopes all logs and
+metrics to the incident time window (24 h before to 2 h after), and produces one small,
+focused archive that a support engineer can review in minutes.
+
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- NS=ns1 VM=myvm \
+   /usr/bin/gather --vm-incident \
+   --incident-time=2026-06-06T06:06:00Z
+```
+
+#### What gets collected
+
+Everything below is scoped to the incident node and time window — no cluster-wide noise.
+
+**Node logs and kernel diagnostics** (`nodes/<node>/`)
+- Full journal and kubelet logs (time-scoped to 24 h before → 2 h after)
+- `dmesg` — kernel ring buffer
+- Kernel red-flag scan — grep of `journalctl -k` for OOM kills, NFS errors, QEMU crashes,
+  blocked tasks, and I/O stalls over the last 7 days
+
+**Hardware and system configuration** (`nodes/<node>/`)
+- `dmidecode` — CPU microcode revision, BIOS version, memory DIMM layout
+- `sysctl -a` — all kernel tunables
+- `chronyc sources tracking` — NTP synchronization state
+- `ip a` — network interface configuration
+- Tuned profile and modprobe config
+
+**Storage and I/O diagnostics** (`nodes/<node>/`)
+- `/proc/self/mountstats` — NFS latency, retransmits, per-op timings
+- `/proc/diskstats` — block device I/O counters
+- `/proc/pressure/{cpu,memory,io}` — PSI (Pressure Stall Information) counters
+- `df -h` — filesystem usage
+- `/proc/mounts` — mount table
+- NFS client config (`nfs.conf`, module parameters, modprobe rules)
+
+**Cluster health snapshot** (`cluster-scoped-resources/`)
+- ClusterOperators, nodes overview, MachineConfigPools
+- `oc adm top node` for the incident node
+- KubeVirt / CNV version (`kubevirt_version`)
+- All VMIs running on the incident node at incident time (`vmis_on_incident_node`) —
+  queried from Prometheus for noisy-neighbor analysis
+
+**VM and storage chain** (`namespaces/<ns>/`)
+- VM and VMI definitions (via `oc adm inspect`)
+- PVCs used by the VM, backing PVs, StorageClasses
+- DataVolumes (CDI import/clone status and conditions)
+- VolumeAttachments for the incident node
+- Namespace events (FailedAttach, FailedMount, etc.)
+
+**Pod logs** (`namespaces/<ns>/core/pods/`)
+- virt-launcher pod: all containers, current and previous logs (captures crash output)
+- virt-handler pod on the incident node: current and previous logs
+
+**Live VM state** (`namespaces/<ns>/vms/<vm>/`) — only if the VM has NOT restarted since the
+incident; skipped automatically when the pod postdates the incident, since that data would
+reflect the new instance, not the crash:
+- `virsh dumpxml` — full libvirt domain XML
+- `virsh domblklist` — block device mapping
+- `virsh domjobinfo` — migration/save job state
+- `virsh domstats` — live per-device block I/O, network stats, balloon info, CPU time
+- `virsh domblkerror` — block device error state (QEMU uses `werror=stop, rerror=stop`)
+- `virsh list --all` — domain state
+- Guest serial console log (`virt-serial0-log`) — kernel panic text, BSOD codes
+- QEMU log files from `/var/log/libvirt/qemu/` and runtime log directories
+- QEMU process `/proc/<pid>/status` — VmRSS, VmPeak, voluntary/involuntary context switches
+- QEMU cgroup stats — `memory.current`, `memory.max`, `memory.events` (OOM kill count),
+  `cpu.stat` (throttled time), `cpu.max`
+
+**Performance metrics** (`incident-metrics/`)
+- 26 Prometheus metrics exported in OpenMetrics format over the incident window (30 s step),
+  covering VM, node, storage, and alert categories:
+
+  | Category | Metrics |
+  |---|---|
+  | VM | CPU usage rate, resident memory, swap-in traffic, network TX/RX bytes and errors, disk read/write bytes and latency |
+  | Node | CPU usage, available memory, CPU/memory/I/O pressure (PSI), disk I/O utilization, 1-min load average, network receive errors |
+  | Storage | PV usage %, volume mount duration, volume access-control duration |
+  | Alerts | All firing KubeVirt alerts at incident time |
+
+- `metrics-metadata.json` — which metrics were collected, which were skipped (with reasons),
+  time window, and query step
+
+**Incident summary** (`incident-summary.yaml`)
+- Lists the VM, namespace, incident time, collection window, node (and how it was discovered),
+  elapsed time, and itemized lists of what was collected and skipped with reasons
+
+#### Node discovery
+
+The node is identified via a Prometheus query
+(`last_over_time(kubevirt_vmi_info{...}[24h])`) at incident time. This works even if the VM
+has since live-migrated or restarted on a different node. If the monitoring stack is
+unavailable, the tool falls back to the current VMI's `status.nodeName` with a warning.
+
+#### Output structure
+
+Output is written to standard must-gather paths (`nodes/`, `namespaces/`,
+`cluster-scoped-resources/`) so tools like [omc](https://github.com/gmeghnag/omc) can parse
+the archive normally.
+
+#### Timeout
+
+The entire collection is timeboxed to 10 minutes by default (configurable via
+`INCIDENT_TIMEOUT`):
+
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- NS=ns1 VM=myvm \
+   INCIDENT_TIMEOUT=180 \
+   /usr/bin/gather --vm-incident \
+   --incident-time=2026-06-06T06:06:00Z
+```
+
+#### Backfilling metrics into Prometheus or VictoriaMetrics
+
+The `incident-metrics/incident-metrics.txt` file is in standard
+[OpenMetrics](https://openmetrics.io/) format. You can import it into a local Prometheus or
+VictoriaMetrics instance to query and graph the incident timeline with Grafana.
+
+**Prometheus** (requires `promtool` from the Prometheus distribution):
+```sh
+promtool tsdb create-blocks-from openmetrics incident-metrics.txt
+```
+This creates TSDB blocks in a `data/` directory that can be copied into your Prometheus data
+directory. After restarting Prometheus, the historical metrics become queryable.
+
+**VictoriaMetrics**:
+```sh
+curl -X POST 'http://localhost:8428/api/v1/import/prometheus' \
+  --data-binary @incident-metrics.txt
+```
+
+#### Workflow
+
+The incident collection is designed as a first-response tool. If it surfaces the root cause,
+no further collection is needed. If it narrows the problem but more context is required, the
+customer can then run a full CNV must-gather, OCP must-gather, or sosreports — but the
+support engineer already knows where to look.
 
 ### Targeted gathering - Images information
 
