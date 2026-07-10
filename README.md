@@ -281,15 +281,20 @@ reflect the new instance, not the crash:
   `cpu.stat` (throttled time), `cpu.max`
 
 **Performance metrics** (`incident-metrics/`)
-- 26 Prometheus metrics exported in OpenMetrics format over the incident window (30 s step),
+- 33 Prometheus metrics exported in OpenMetrics format over the incident window (30 s step),
   covering VM, node, storage, and alert categories:
 
   | Category | Metrics |
   |---|---|
   | VM | CPU usage rate, resident memory, swap-in traffic, network TX/RX bytes and errors, disk read/write bytes and latency |
+  | VM (KME) | Per-disk I/O latency p99 and average, virtio-blk queue in-flight and capacity (QMP); guest-side I/O latency and IOPS (QGA, Windows) |
   | Node | CPU usage, available memory, CPU/memory/I/O pressure (PSI), disk I/O utilization, 1-min load average, network receive errors |
+  | Node (KME) | Block I/O latency p99, system block I/O latency p99, NFS I/O latency p99, NFS VFS call latency p99 (eBPF) |
   | Storage | PV usage %, volume mount duration, volume access-control duration |
   | Alerts | All firing KubeVirt alerts at incident time |
+
+  Metrics from kubevirt-metrics-exporter (KME) require the exporter to be deployed; when
+  absent, they are silently skipped and recorded in `metrics-metadata.json`.
 
 - `metrics-metadata.json` — which metrics were collected, which were skipped (with reasons),
   time window, and query step
