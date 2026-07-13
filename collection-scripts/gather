@@ -55,20 +55,14 @@ function parse_flags {
         requested_scripts+=("vms_details")
         requested_scripts+=("vms_namespaces")
         ;;
-      --virtio_driver_check=all)
-        export VIRTIO_DRIVER_CHECK_ALL=true
-        requested_scripts+=("virtio_driver_check")
-        ;;
       --virtio_driver_check=*/*)
         local _target="${1#*=}"
         export NS="${_target%%/*}"
         export VM="${_target#*/}"
         requested_scripts+=("virtio_driver_check")
         ;;
-      --virtio_driver_check)
-        echo "WARNING: --virtio_driver_check requires a target." >&2
-        echo "  Usage: --virtio_driver_check=<namespace>/<vm>" >&2
-        echo "         --virtio_driver_check=all" >&2
+      --virtio_driver_check=all|--virtio_driver_check)
+        requested_scripts+=("virtio_driver_check")
         ;;
       --vm-incident)
         VM_INCIDENT=true
@@ -112,8 +106,8 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   > or more of the following parameters:
   --images
   --vms_details
-  --virtio_driver_check=<namespace>/<vm>   Check a specific VM for outdated VirtIO drivers
-  --virtio_driver_check=all                Check all running VMs
+  --virtio_driver_check                    Check all running Windows VMs for outdated VirtIO drivers
+  --virtio_driver_check=<namespace>/<vm>   Check a specific VM
 
   > Incident collection for a specific VM at a known time.
   > Unlike a full must-gather, this collects ONLY data pertinent to the

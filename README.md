@@ -353,40 +353,43 @@ support engineer already knows where to look.
 
 ### VirtIO driver version check
 
-Check whether VMs are running outdated VirtIO drivers by comparing installed
-versions (queried via the QEMU guest agent) against the baseline shipped with
-the cluster's virtio-win container disk.
+Check whether Windows VMs are running outdated VirtIO drivers by comparing
+installed versions (queried via the QEMU guest agent) against the baseline
+shipped with the cluster's virtio-win container disk.
+
+Only Windows VMs are checked. The OS type is detected via `guest-get-osinfo`,
+so Linux VMs are skipped even if they have a guest agent installed. VMs without
+the QEMU guest agent are also skipped.
 
 Check a specific VM:
 ```sh
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
-   -- /usr/bin/gather \
-   --virtio_driver_check=default/myvm
+   -- NS=default VM=myvm \
+   /usr/bin/gather --virtio_driver_check=default/myvm
 ```
 
-Check all running VMs:
+Check all running Windows VMs:
 ```sh
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- /usr/bin/gather \
-   --virtio_driver_check=all
+   --virtio_driver_check
 ```
 
 The driver check also runs automatically as part of `--vm-incident`.
 
-VMs without the QEMU guest agent are skipped.
-
 #### Output
 
-Results are written to `virtio-win-driver-check/` in the must-gather archive:
+Per-VM results follow the standard must-gather output format under
+`namespaces/<ns>/vms/<vm>/`:
 
 | File | Description |
 |---|---|
-| `baseline.json` | Virtio-win container disk image reference and expected driver version |
-| `summary.json` | Cluster-wide totals: VMs checked, outdated, skipped |
-| `vms/<ns>/<vm>/report.json` | Per-driver comparison with status (OK, OUTDATED, NEWER) |
-| `vms/<ns>/<vm>/installed-drivers.json` | Raw guest agent device data (VirtIO devices only) |
+| `virtio-win-baseline.json` | Virtio-win container disk image reference and expected driver version |
+| `virtio-win-summary.json` | Cluster-wide totals: VMs checked, outdated, skipped |
+| `namespaces/<ns>/vms/<vm>/virtio-driver-report.json` | Per-driver comparison with status (OK, OUTDATED, NEWER) |
+| `namespaces/<ns>/vms/<vm>/virtio-driver-installed.json` | Raw guest agent device data (VirtIO devices only) |
 
 #### Timeout
 
@@ -398,7 +401,7 @@ oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- DRIVER_CHECK_TIMEOUT=120 \
    /usr/bin/gather \
-   --virtio_driver_check=all
+   --virtio_driver_check
 ```
 
 ### Targeted gathering - Images information
