@@ -110,14 +110,16 @@ get_vm_os_type() {
         return
     fi
 
-    local kernel_type
-    kernel_type=$(echo "${raw}" | jq -r '.return."kernel-type" // empty' 2>/dev/null)
+    local os_id
+    os_id=$(echo "${raw}" | jq -r '.return.id // empty' 2>/dev/null)
 
-    case "${kernel_type}" in
-        nt) echo "windows" ;;
-        linux) echo "linux" ;;
-        *) echo "unknown" ;;
-    esac
+    if [[ "${os_id}" == "mswindows" ]]; then
+        echo "windows"
+    elif [[ -n "${os_id}" ]]; then
+        echo "linux"
+    else
+        echo "unknown"
+    fi
 }
 
 # ---------------------------------------------------------------------------
