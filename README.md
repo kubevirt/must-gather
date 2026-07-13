@@ -366,7 +366,7 @@ Check a specific VM:
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- NS=default VM=myvm \
-   /usr/bin/gather --virtio_driver_check=default/myvm
+   /usr/bin/gather --virtio_win_driver_check=default/myvm
 ```
 
 Check all running Windows VMs:
@@ -374,7 +374,7 @@ Check all running Windows VMs:
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- /usr/bin/gather \
-   --virtio_driver_check
+   --virtio_win_driver_check
 ```
 
 The driver check also runs automatically as part of `--vm-incident`.
@@ -401,7 +401,7 @@ oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- DRIVER_CHECK_TIMEOUT=120 \
    /usr/bin/gather \
-   --virtio_driver_check
+   --virtio_win_driver_check
 ```
 
 ### Targeted gathering - Images information
