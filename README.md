@@ -366,7 +366,15 @@ Check a specific VM:
 oc adm must-gather \
    --image=quay.io/kubevirt/must-gather \
    -- NS=default VM=myvm \
-   /usr/bin/gather --virtio_win_driver_check=default/myvm
+   /usr/bin/gather --virtio_win_driver_check
+```
+
+Check all VMs in a namespace:
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- NS=default \
+   /usr/bin/gather --virtio_win_driver_check
 ```
 
 Check all running Windows VMs:

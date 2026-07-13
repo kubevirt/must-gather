@@ -9,7 +9,8 @@
 #
 # Targeting (consistent with --vms_details and --vm-incident):
 #   NS=ns1 VM=myvm  - check a single VM
-#   (no env vars)   - check all running Windows VMs
+#   NS=ns1           - check all VMs in a namespace
+#   (no env vars)    - check all running Windows VMs
 #
 # Output follows the must-gather output format:
 #   <base>/namespaces/<ns>/vms/<vm>/
@@ -268,14 +269,29 @@ checked=0
 outdated_count=0
 skipped=0
 
-if [[ -n "${NS:-}" && -n "${VM:-}" ]]; then
-    echo "Checking VM ${VM} in namespace ${NS}"
-    mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod -n "${NS}" \
-        -l "kubevirt.io=virt-launcher" \
-        --field-selector=status.phase=Running \
-        --no-headers \
-        -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
-        | awk -v vm="${VM}" '$3 == vm {print $1 " " $2 " " $3}')
+if [[ -n "${VM:-}" && -z "${NS:-}" ]]; then
+    echo "ERROR: VM is set but NS is not. Cannot check a specific VM without a namespace." >&2
+    exit 1
+fi
+
+if [[ -n "${NS:-}" ]]; then
+    if [[ -n "${VM:-}" ]]; then
+        echo "Checking VM ${VM} in namespace ${NS}"
+        mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod -n "${NS}" \
+            -l "kubevirt.io=virt-launcher" \
+            --field-selector=status.phase=Running \
+            --no-headers \
+            -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
+            | awk -v vm="${VM}" '$3 == vm {print $1 " " $2 " " $3}')
+    else
+        echo "Checking all running VMs in namespace ${NS}"
+        mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod -n "${NS}" \
+            -l kubevirt.io=virt-launcher \
+            --field-selector=status.phase=Running \
+            --no-headers \
+            -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
+            | awk '{print $1 " " $2 " " $3}')
+    fi
 else
     echo "Checking all running VMs"
     mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod --all-namespaces \
