@@ -63,35 +63,61 @@ get_baseline() {
         return 1
     fi
 
-    echo "Extracting baseline driver version from ${virtio_img}..." >&2
+    echo "Extracting per-driver baseline versions from ${virtio_img}..." >&2
 
     local raw
     local pod_name="must-gather-virtio-ver-${RANDOM}"
     raw=$(timeout 120 /usr/bin/oc run "${pod_name}" \
         --rm -i --restart=Never --quiet \
         --image="${virtio_img}" \
-        --command -- sh -c 'grep -a "^DriverVer" /disk/*' 2>/dev/null)
+        --command -- sh -c '
+# Extract display name -> version mapping from the ISO binary.
+# Each .inf contains a DriverPackageDisplayName key and a DriverVer line,
+# and the [Strings] section maps keys to human-readable display names.
+
+# Step 1: key=displayname from [Strings] sections
+grep -aoP "[A-Za-z0-9]+\.DeviceDesc\s*=\s*\"[^\"]+\"" /disk/* 2>/dev/null \
+| sed "s/\s*=\s*/=/" | tr -d "\"" | sort -u > /tmp/names.txt
+
+# Step 2: key=version (highest per key)
+grep -aoP "DriverPackageDisplayName\s*=\s*%[^%]+%|DriverVer\s*=\s*[^\r\n]+" /disk/* 2>/dev/null \
+| awk "/^DriverVer/ { ver=\$0; next } /^DriverPackageDisplayName/ { match(\$0, /%([^%]+)%/, a); match(ver, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/, v); if (a[1] && v[0]) print a[1] \"=\" v[0] }" \
+| sort -t= -k1,1 -k2,2V \
+| awk -F= "{ latest[\$1] = \$2 } END { for (k in latest) print k \"=\" latest[k] }" > /tmp/versions.txt
+
+# Step 3: Join and deduplicate by display name (take highest version)
+while IFS="=" read -r key dispname; do
+  ver=$(grep "^${key}=" /tmp/versions.txt 2>/dev/null | cut -d= -f2)
+  if [ -n "$ver" ]; then
+    echo "${dispname}=${ver}"
+  fi
+done < /tmp/names.txt \
+| sort -t= -k1,1 -k2,2V \
+| awk -F= "{ latest[\$1] = \$2 } END { for (k in latest) print k \"=\" latest[k] }"
+' 2>/dev/null)
 
     # Clean up in case --rm didn't catch it
     /usr/bin/oc delete pod "${pod_name}" --ignore-not-found --wait=false 2>/dev/null
 
-    local baseline_version
-    baseline_version=$(echo "${raw}" \
-        | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' \
-        | sort -V | tail -1)
-
-    if [[ -z "${baseline_version}" ]]; then
-        echo "WARNING: Could not extract driver version from virtio-win image" >&2
+    if [[ -z "${raw}" ]]; then
+        echo "WARNING: Could not extract driver versions from virtio-win image" >&2
         return 1
     fi
 
+    # Build JSON baseline: {"image": "...", "drivers": {"Display Name": "version", ...}}
+    local drivers_json="{}"
+    while IFS="=" read -r name ver; do
+        drivers_json=$(echo "${drivers_json}" | jq --arg n "${name}" --arg v "${ver}" '. + {($n): $v}')
+    done <<< "${raw}"
+
     jq -n \
         --arg image "${virtio_img}" \
-        --arg version "${baseline_version}" \
-        '{"image": $image, "version": $version}' \
+        --argjson drivers "${drivers_json}" \
+        '{"image": $image, "drivers": $drivers}' \
         > "${BASE_COLLECTION_PATH}/virtio-win-baseline.json"
 
-    echo "${baseline_version}"
+    # Output the raw mapping for use by check_vm
+    echo "${raw}"
 }
 
 # ---------------------------------------------------------------------------
@@ -177,7 +203,9 @@ compare_versions() {
 # ---------------------------------------------------------------------------
 
 check_vm() {
-    local ns="$1" pod="$2" vm="$3" baseline="$4"
+    local ns="$1" pod="$2" vm="$3"
+    # $4 is the per-driver baseline mapping (newline-separated "Display Name=version")
+    local baseline_map="$4"
 
     local vm_path="${BASE_COLLECTION_PATH}/namespaces/${ns}/vms/${vm}"
     mkdir -p "${vm_path}"
@@ -216,25 +244,33 @@ check_vm() {
     count=$(echo "${drivers}" | jq 'length')
 
     for (( i=0; i<count; i++ )); do
-        local name version
+        local name version baseline_ver status
         name=$(echo "${drivers}" | jq -r ".[$i].name")
         version=$(echo "${drivers}" | jq -r ".[$i].version")
-        local status
-        status=$(compare_versions "${version}" "${baseline}")
+
+        # Look up per-driver baseline by display name
+        baseline_ver=$(echo "${baseline_map}" | grep "^${name}=" | cut -d= -f2)
+
+        if [[ -n "${baseline_ver}" ]]; then
+            status=$(compare_versions "${version}" "${baseline_ver}")
+        else
+            baseline_ver="N/A"
+            status="UNKNOWN"
+        fi
 
         report=$(echo "${report}" | jq \
             --arg name "${name}" \
             --arg installed "${version}" \
+            --arg baseline "${baseline_ver}" \
             --arg status "${status}" \
-            '. + [{"driver": $name, "installed": $installed, "status": $status}]')
+            '. + [{"driver": $name, "installed": $installed, "baseline": $baseline, "status": $status}]')
     done
 
     jq -n \
         --arg vm "${vm}" \
         --arg ns "${ns}" \
-        --arg baseline "${baseline}" \
         --argjson drivers "${report}" \
-        '{"vm": $vm, "namespace": $ns, "baseline": $baseline, "drivers": $drivers}' \
+        '{"vm": $vm, "namespace": $ns, "drivers": $drivers}' \
         > "${vm_path}/virtio-driver-report.json"
 
     if echo "${report}" | jq -e '[.[] | select(.status == "OUTDATED")] | length > 0' >/dev/null 2>&1; then
@@ -253,16 +289,16 @@ echo "VirtIO Driver Version Check (Windows VMs)"
 echo "Timeout: ${DRIVER_CHECK_TIMEOUT}s"
 echo "========================================"
 
-BASELINE=$(get_baseline)
-if [[ -z "${BASELINE}" ]]; then
-    echo "ERROR: Could not determine baseline driver version. Skipping driver check." >&2
-    jq -n '{"error": "could not determine baseline version"}' > "${BASE_COLLECTION_PATH}/virtio-win-summary.json"
+BASELINE_MAP=$(get_baseline)
+if [[ -z "${BASELINE_MAP}" ]]; then
+    echo "ERROR: Could not determine baseline driver versions. Skipping driver check." >&2
+    jq -n '{"error": "could not determine baseline versions"}' > "${BASE_COLLECTION_PATH}/virtio-win-summary.json"
     exit 0
 fi
 
 check_timeout || exit 0
 
-echo "Baseline driver version: ${BASELINE}"
+echo "Baseline driver versions extracted ($(echo "${BASELINE_MAP}" | wc -l) drivers)"
 
 total=0
 checked=0
@@ -315,7 +351,7 @@ for entry in "${PODS[@]}"; do
     read -r ns pod vm <<< "${entry}"
     echo "Checking ${vm} (${ns})..."
 
-    result=$(check_vm "${ns}" "${pod}" "${vm}" "${BASELINE}")
+    result=$(check_vm "${ns}" "${pod}" "${vm}" "${BASELINE_MAP}")
 
     case "${result}" in
         OUTDATED) checked=$((checked+1)); outdated_count=$((outdated_count+1)) ;;
@@ -325,12 +361,11 @@ for entry in "${PODS[@]}"; do
 done
 
 jq -n \
-    --arg baseline "${BASELINE}" \
     --argjson total "${total}" \
     --argjson checked "${checked}" \
     --argjson outdated "${outdated_count}" \
     --argjson skipped "${skipped}" \
-    '{"baseline_version": $baseline, "total_vms": $total, "checked": $checked, "outdated": $outdated, "skipped": $skipped}' \
+    '{"total_vms": $total, "checked": $checked, "outdated": $outdated, "skipped": $skipped}' \
     > "${BASE_COLLECTION_PATH}/virtio-win-summary.json"
 
 echo "========================================"
