@@ -12,7 +12,7 @@ ENV INSTALLATION_NAMESPACE=kubevirt-hyperconverged
 
 # For gathering data from nodes
 RUN dnf update -y && \
-    dnf install iproute tcpdump pciutils util-linux nftables rsync jq -y && \
+    dnf install iproute tcpdump pciutils util-linux nftables rsync jq xorriso -y && \
     dnf clean all
 
 COPY --from=go-builder /go/src/github.com/kubevirt/must-gather/cmd/vmConvertor/vmConvertor /usr/bin/
