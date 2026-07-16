@@ -4,7 +4,7 @@
 # shipped with the cluster's virtio-win container disk.
 #
 # Baselines are keyed by driver display name, guest OS release folder, and arch
-# (e.g. NetKVM/2k25/amd64), matching the virtio-win ISO layout.
+# (e.g. NetKVM/2k25/amd64), taken from data/info.json inside the virtio-win ISO.
 #
 # Only Windows VMs are checked. The OS type is detected via the QEMU guest
 # agent's guest-get-osinfo command. Linux VMs, VMs without a guest agent,
@@ -41,30 +41,6 @@ check_timeout() {
         return 1
     fi
     return 0
-}
-
-# ---------------------------------------------------------------------------
-# Helpers: self image / namespace for the baseline extract pod
-# ---------------------------------------------------------------------------
-
-get_pod_namespace() {
-    cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null \
-        || echo "default"
-}
-
-get_self_image() {
-    local ns pod
-    ns=$(get_pod_namespace)
-    # centos stream base image has no hostname(1); use env /etc/hostname
-    pod="${HOSTNAME:-}"
-    if [[ -z "${pod}" && -r /etc/hostname ]]; then
-        pod=$(tr -d '\n' </etc/hostname)
-    fi
-    if [[ -z "${pod}" ]]; then
-        return 1
-    fi
-    timeout 30 /usr/bin/oc get pod "${pod}" -n "${ns}" \
-        -o jsonpath='{.spec.containers[0].image}' 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -143,11 +119,12 @@ map_guest_arch() {
 }
 
 # ---------------------------------------------------------------------------
-# Baseline: extract per-driver / per-OS / per-arch versions from virtio-win ISO
+# Baseline: read data/info.json from the virtio-win ISO (no mount / xorriso).
+# Walks the ISO9660 directory records with dd/od/awk inside the virtio-win image.
 # ---------------------------------------------------------------------------
 
 get_baseline() {
-    local virtio_img ns self_img pod_name
+    local virtio_img ns pod_name raw drivers_json
 
     for ns in "${INSTALLATION_NAMESPACE}" openshift-cnv kubevirt-hyperconverged; do
         virtio_img=$(timeout 30 /usr/bin/oc get deploy hco-operator \
@@ -163,148 +140,68 @@ get_baseline() {
         return 1
     fi
 
-    self_img=$(get_self_image)
-    if [[ -z "${self_img}" ]]; then
-        echo "WARNING: Could not determine must-gather image for baseline extraction" >&2
-        return 1
-    fi
-
-    ns=$(get_pod_namespace)
     pod_name="must-gather-virtio-ver-${RANDOM}"
+    echo "Extracting data/info.json baselines from ${virtio_img}..." >&2
 
-    echo "Extracting per-driver/OS/arch baselines from ${virtio_img}..." >&2
+    # Extract data/info.json from the ISO using only tools in the virtio-win image.
+    # Single-quoted remote script so local expansion cannot mangle the ISO walker.
+    raw=$(timeout 120 /usr/bin/oc run "${pod_name}" \
+        --rm -i --restart=Never --quiet \
+        --image="${virtio_img}" \
+        --command -- bash -c '
+iso_u32le() { dd if="$1" bs=1 skip="$2" count=4 2>/dev/null | od -An -tu1 | awk "{print \$1+\$2*256+\$3*65536+\$4*16777216}"; }
+iso_u8()    { dd if="$1" bs=1 skip="$2" count=1 2>/dev/null | od -An -tu1 | awk "{print \$1}"; }
+iso_str()   { dd if="$1" bs=1 skip="$2" count="$3" 2>/dev/null | tr -d "\0"; }
+I=/disk/virtio-win.iso
+RL=$(iso_u32le $I 32926); RS=$(iso_u32le $I 32934); RB=$((RL*2048)); O=0
+while [ $O -lt $RS ]; do
+  L=$(iso_u8 $I $((RB+O))); [ "${L:-0}" -eq 0 ] && { O=$(( ((O/2048)+1)*2048 )); continue; }
+  IL=$(iso_u8 $I $((RB+O+32))); ID=$(iso_str $I $((RB+O+33)) $IL | tr "[:upper:]" "[:lower:]")
+  [ "${ID%;*}" = "data" ] && { DL=$(iso_u32le $I $((RB+O+2))); DS=$(iso_u32le $I $((RB+O+10))); break; }
+  O=$((O+L))
+done
+DB=$((DL*2048)); O=0
+while [ $O -lt $DS ]; do
+  L=$(iso_u8 $I $((DB+O))); [ "${L:-0}" -eq 0 ] && { O=$(( ((O/2048)+1)*2048 )); continue; }
+  IL=$(iso_u8 $I $((DB+O+32))); ID=$(iso_str $I $((DB+O+33)) $IL | tr "[:upper:]" "[:lower:]")
+  [ "${ID%;*}" = "info.json" ] && { FL=$(iso_u32le $I $((DB+O+2))); FS=$(iso_u32le $I $((DB+O+10))); break; }
+  O=$((O+L))
+done
+dd if=$I bs=2048 skip=$FL count=$(((FS+2047)/2048)) 2>/dev/null | dd bs=1 count=$FS 2>/dev/null
+' 2>/dev/null)
 
-    # Init container copies the ISO; this image (with xorriso) extracts only *.inf
-    # and emits a JSON baseline matrix on stdout.
-    if ! timeout 180 /usr/bin/oc apply -n "${ns}" -f - <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${pod_name}
-  labels:
-    app: must-gather-virtio-baseline
-spec:
-  restartPolicy: Never
-  initContainers:
-  - name: copy-iso
-    image: ${virtio_img}
-    command: ["cp", "/disk/virtio-win.iso", "/work/virtio-win.iso"]
-    volumeMounts:
-    - name: work
-      mountPath: /work
-  containers:
-  - name: extract
-    image: ${self_img}
-    command: ["bash", "-c"]
-    args:
-    - |
-      set -euo pipefail
-      mkdir -p /tmp/infs
-      mapfile -t INFS < <(xorriso -indev /work/virtio-win.iso -find / -name '*.inf' 2>/dev/null | tr -d "'")
-      args=()
-      for p in "\${INFS[@]}"; do
-        [[ -z "\$p" || "\$p" == "/" ]] && continue
-        # Skip installer/helper infs not under Kind/OS/Arch
-        [[ "\$p" != */*/*/* ]] && continue
-        mkdir -p "/tmp/infs\$(dirname "\$p")"
-        args+=(-extract_single "\$p" "/tmp/infs\$p")
-      done
-      if (( \${#args[@]} > 0 )); then
-        xorriso -osirrox on -indev /work/virtio-win.iso "\${args[@]}" >/tmp/xorriso.log 2>&1 || true
-      fi
+    /usr/bin/oc delete pod "${pod_name}" --ignore-not-found --wait=false 2>/dev/null || true
 
-      # Emit TSV: display_name<TAB>os<TAB>arch<TAB>version<TAB>date
-      while IFS= read -r -d '' f; do
-        rel="\${f#/tmp/infs/}"
-        kind=\$(echo "\$rel" | cut -d/ -f1)
-        os=\$(echo "\$rel" | cut -d/ -f2)
-        arch=\$(echo "\$rel" | cut -d/ -f3)
-        # Only real VirtIO driver trees (Kind/OS/Arch/file.inf)
-        [[ -n "\$kind" && -n "\$os" && -n "\$arch" ]] || continue
-        case "\$kind" in
-          NetKVM|Balloon|vioscsi|viostor|vioserial|viorng|vioinput|viofs|viogpudo|qxldod) ;;
-          *) continue ;;
-        esac
-        case "\$arch" in amd64|x86|ARM64) ;; *) continue ;; esac
-
-        ver_line=\$(grep -ai '^DriverVer' "\$f" | head -1 | tr -d '\r' || true)
-        [[ -n "\$ver_line" ]] || continue
-        date=\$(echo "\$ver_line" | sed -E 's/.*DriverVer[[:space:]]*=[[:space:]]*//; s/,.*//')
-        ver=\$(echo "\$ver_line" | sed -E 's/.*DriverVer[[:space:]]*=[[:space:]]*//; s/^[^,]*,//; s/[[:space:]]*$//')
-        [[ "\$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
-
-        # Resolve display name from DriverPackageDisplayName + [Strings]
-        key=\$(grep -ai '^DriverPackageDisplayName' "\$f" | head -1 | tr -d '\r' \
-          | sed -E 's/.*DriverPackageDisplayName[[:space:]]*=[[:space:]]*//; s/^%//; s/%$//; s/^"//; s/"$//' || true)
-        name=""
-        if [[ -n "\$key" ]]; then
-          name=\$(grep -aiE "^\$key[[:space:]]*=" "\$f" | head -1 | tr -d '\r' \
-            | sed -E 's/^[^=]*=[[:space:]]*//; s/^"//; s/"$//' || true)
-        fi
-        if [[ -z "\$name" ]]; then
-          name=\$(grep -aiE '^[A-Za-z0-9_.]+\.DeviceDesc[[:space:]]*=' "\$f" | head -1 | tr -d '\r' \
-            | sed -E 's/^[^=]*=[[:space:]]*//; s/^"//; s/"$//' || true)
-        fi
-        [[ -n "\$name" ]] || name="\$kind"
-
-        printf '%s\t%s\t%s\t%s\t%s\n' "\$name" "\$os" "\$arch" "\$ver" "\$date"
-      done < <(find /tmp/infs -type f -iname '*.inf' -print0) | sort -u
-    volumeMounts:
-    - name: work
-      mountPath: /work
-  volumes:
-  - name: work
-    emptyDir: {}
-EOF
-    then
-        echo "WARNING: Failed to create baseline extract pod" >&2
+    if [[ -z "${raw}" ]] || ! echo "${raw}" | jq -e '.drivers | type == "array"' >/dev/null 2>&1; then
+        echo "WARNING: Could not extract data/info.json from virtio-win image" >&2
         return 1
     fi
 
-    # Wait for Succeeded/Failed
-    local phase=""
-    local i
-    for i in $(seq 1 60); do
-        phase=$(timeout 15 /usr/bin/oc get pod "${pod_name}" -n "${ns}" \
-            -o jsonpath='{.status.phase}' 2>/dev/null || echo "Missing")
-        if [[ "${phase}" == "Succeeded" || "${phase}" == "Failed" || "${phase}" == "Missing" ]]; then
-            break
-        fi
-        sleep 3
-    done
+    # info.json: [{name, windows_version, arch, driver_version: "date,ver", inf_path}, ...]
+    # -> drivers[name][os][arch] = {version, date, inf_path}
+    drivers_json=$(echo "${raw}" | jq '
+        reduce .drivers[] as $d ({};
+            ($d.driver_version | split(",")) as $parts
+            | .[$d.name][$d.windows_version][$d.arch] = {
+                "version": $parts[1],
+                "date": $parts[0],
+                "inf_path": $d.inf_path
+              }
+        )')
 
-    local raw
-    raw=$(timeout 30 /usr/bin/oc logs "${pod_name}" -n "${ns}" -c extract 2>/dev/null || true)
-
-    /usr/bin/oc delete pod "${pod_name}" -n "${ns}" --ignore-not-found --wait=false 2>/dev/null || true
-
-    if [[ -z "${raw}" || "${phase}" != "Succeeded" ]]; then
-        echo "WARNING: Could not extract driver versions from virtio-win image (phase=${phase})" >&2
-        return 1
-    fi
-
-    # Build nested JSON: drivers[name][os][arch] = {version, date}
-    local drivers_json="{}"
-    while IFS=$'\t' read -r name os arch ver date; do
-        [[ -n "${name}" && -n "${os}" && -n "${arch}" && -n "${ver}" ]] || continue
-        drivers_json=$(echo "${drivers_json}" | jq \
-            --arg n "${name}" --arg o "${os}" --arg a "${arch}" \
-            --arg v "${ver}" --arg d "${date}" \
-            '.[$n][$o][$a] = {"version": $v, "date": $d}')
-    done <<< "${raw}"
-
-    if [[ "${drivers_json}" == "{}" ]]; then
-        echo "WARNING: No driver baselines parsed from virtio-win ISO" >&2
+    if [[ -z "${drivers_json}" || "${drivers_json}" == "{}" || "${drivers_json}" == "null" ]]; then
+        echo "WARNING: No driver baselines parsed from data/info.json" >&2
         return 1
     fi
 
     jq -n \
         --arg image "${virtio_img}" \
         --argjson drivers "${drivers_json}" \
-        '{"image": $image, "drivers": $drivers}' \
+        --argjson info "${raw}" \
+        '{"image": $image, "drivers": $drivers, "info_json": $info}' \
         > "${BASE_COLLECTION_PATH}/virtio-win-baseline.json"
 
-    echo "Baseline written ($(echo "${drivers_json}" | jq '[.. | objects | select(has("version")) ] | length') entries)" >&2
+    echo "Baseline written ($(echo "${drivers_json}" | jq '[.. | objects | select(has("version"))] | length') entries)" >&2
     return 0
 }
 
