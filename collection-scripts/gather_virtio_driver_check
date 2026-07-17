@@ -1,0 +1,503 @@
+#!/bin/bash -x
+
+# Checks installed VirtIO driver versions on Windows VMs against the baseline
+# shipped with the cluster's virtio-win container disk.
+#
+# Baselines are keyed by driver display name, guest OS release folder, and arch
+# (e.g. NetKVM/2k25/amd64), taken from data/info.json inside the virtio-win ISO.
+#
+# Only Windows VMs are checked. The OS type is detected via the QEMU guest
+# agent's guest-get-osinfo command. Linux VMs, VMs without a guest agent,
+# and VMs where guest-get-devices is not supported are skipped.
+#
+# Targeting (consistent with --vms_details and --vm-incident):
+#   NS=ns1 VM=myvm  - check a single VM
+#   NS=ns1           - check all VMs in a namespace
+#   (no env vars)    - check all running Windows VMs
+#
+# Output follows the must-gather output format:
+#   <base>/namespaces/<ns>/vms/<vm>/
+#     virtio-driver-report.json     - comparison report with status per driver
+#     virtio-driver-installed.json  - raw guest-get-devices output (VirtIO only)
+#   <base>/virtio-win-baseline.json - per driver/OS/arch baseline matrix
+#   <base>/virtio-win-summary.json  - cluster-wide totals
+
+DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${DIR_NAME}/common.sh"
+check_command
+
+VIRTIO_VENDOR_ID=6900  # 0x1AF4 in decimal
+DRIVER_CHECK_TIMEOUT=${DRIVER_CHECK_TIMEOUT:-600}
+START_TIME=$(date +%s)
+
+# ---------------------------------------------------------------------------
+# Timeout handling (matches gather_vm_incident pattern)
+# ---------------------------------------------------------------------------
+
+check_timeout() {
+    local elapsed=$(( $(date +%s) - START_TIME ))
+    if [[ ${elapsed} -ge ${DRIVER_CHECK_TIMEOUT} ]]; then
+        echo "WARNING: Timeout reached (${DRIVER_CHECK_TIMEOUT}s). Collection may be incomplete." >&2
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Map guest-get-osinfo fields to a virtio-win ISO OS folder (2k25, w10, ...)
+# ---------------------------------------------------------------------------
+
+map_guest_os_folder() {
+    local version_id="$1" variant="$2" version="$3" pretty="$4" kernel_release="$5"
+    local combined="${version} ${pretty}"
+
+    # Server SKUs use 2kXX folders
+    if [[ "${variant}" == "server" || "${combined}" == *[Ss]erver* ]]; then
+        case "${version_id}" in
+            2025) echo "2k25"; return ;;
+            2022) echo "2k22"; return ;;
+            2019) echo "2k19"; return ;;
+            2016) echo "2k16"; return ;;
+            2012)
+                if [[ "${combined}" == *[Rr]2* ]]; then
+                    echo "2k12R2"
+                else
+                    echo "2k12"
+                fi
+                return
+                ;;
+            2008)
+                if [[ "${combined}" == *[Rr]2* ]]; then
+                    echo "2k8R2"
+                else
+                    echo "2k8"
+                fi
+                return
+                ;;
+            2003) echo "2k3"; return ;;
+        esac
+    fi
+
+    # Desktop / client SKUs
+    case "${version_id}" in
+        11) echo "w11"; return ;;
+        10)
+            # Win11 sometimes still reports version-id 10; build >= 22000 => w11
+            if [[ -n "${kernel_release}" && "${kernel_release}" -ge 22000 ]] 2>/dev/null; then
+                echo "w11"
+            else
+                echo "w10"
+            fi
+            return
+            ;;
+        8.1|6.3) echo "w8.1"; return ;;
+        8|6.2) echo "w8"; return ;;
+        7|6.1) echo "w7"; return ;;
+        XP|5.1) echo "xp"; return ;;
+    esac
+
+    # Fallbacks from pretty/version strings
+    if [[ "${combined}" == *2025* ]]; then echo "2k25"; return; fi
+    if [[ "${combined}" == *2022* ]]; then echo "2k22"; return; fi
+    if [[ "${combined}" == *2019* ]]; then echo "2k19"; return; fi
+    if [[ "${combined}" == *2016* ]]; then echo "2k16"; return; fi
+    if [[ "${combined}" == *"8.1"* || "${combined}" == *"2012 R2"* ]]; then echo "w8.1"; return; fi
+    if [[ "${combined}" == *"Windows 11"* ]]; then echo "w11"; return; fi
+    if [[ "${combined}" == *"Windows 10"* ]]; then echo "w10"; return; fi
+
+    echo "unknown"
+}
+
+map_guest_arch() {
+    local machine="$1"
+    case "${machine}" in
+        x86_64|amd64|x64) echo "amd64" ;;
+        i686|i386|x86)    echo "x86" ;;
+        aarch64|arm64)    echo "ARM64" ;;
+        *)                echo "${machine}" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Baseline: read data/info.json from the virtio-win ISO (no mount / xorriso).
+# Walks the ISO9660 directory records with dd/od/awk inside the virtio-win image.
+# ---------------------------------------------------------------------------
+
+get_baseline() {
+    local virtio_img ns pod_name raw drivers_json
+
+    for ns in "${INSTALLATION_NAMESPACE}" openshift-cnv kubevirt-hyperconverged; do
+        virtio_img=$(timeout 30 /usr/bin/oc get deploy hco-operator \
+            -n "${ns}" \
+            -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="VIRTIOWIN_CONTAINER")].value}' 2>/dev/null)
+        if [[ -n "${virtio_img}" ]]; then
+            break
+        fi
+    done
+
+    if [[ -z "${virtio_img}" ]]; then
+        echo "WARNING: Could not find VIRTIOWIN_CONTAINER in hco-operator deployment" >&2
+        return 1
+    fi
+
+    pod_name="must-gather-virtio-ver-${RANDOM}"
+    echo "Extracting data/info.json baselines from ${virtio_img}..." >&2
+
+    # Extract data/info.json from the ISO using only tools in the virtio-win image.
+    # Single-quoted remote script so local expansion cannot mangle the ISO walker.
+    raw=$(timeout 120 /usr/bin/oc run "${pod_name}" \
+        --rm -i --restart=Never --quiet \
+        --image="${virtio_img}" \
+        --command -- bash -c '
+iso_u32le() { dd if="$1" bs=1 skip="$2" count=4 2>/dev/null | od -An -tu1 | awk "{print \$1+\$2*256+\$3*65536+\$4*16777216}"; }
+iso_u8()    { dd if="$1" bs=1 skip="$2" count=1 2>/dev/null | od -An -tu1 | awk "{print \$1}"; }
+iso_str()   { dd if="$1" bs=1 skip="$2" count="$3" 2>/dev/null | tr -d "\0"; }
+I=/disk/virtio-win.iso
+RL=$(iso_u32le $I 32926); RS=$(iso_u32le $I 32934); RB=$((RL*2048)); O=0
+while [ $O -lt $RS ]; do
+  L=$(iso_u8 $I $((RB+O))); [ "${L:-0}" -eq 0 ] && { O=$(( ((O/2048)+1)*2048 )); continue; }
+  IL=$(iso_u8 $I $((RB+O+32))); ID=$(iso_str $I $((RB+O+33)) $IL | tr "[:upper:]" "[:lower:]")
+  [ "${ID%;*}" = "data" ] && { DL=$(iso_u32le $I $((RB+O+2))); DS=$(iso_u32le $I $((RB+O+10))); break; }
+  O=$((O+L))
+done
+DB=$((DL*2048)); O=0
+while [ $O -lt $DS ]; do
+  L=$(iso_u8 $I $((DB+O))); [ "${L:-0}" -eq 0 ] && { O=$(( ((O/2048)+1)*2048 )); continue; }
+  IL=$(iso_u8 $I $((DB+O+32))); ID=$(iso_str $I $((DB+O+33)) $IL | tr "[:upper:]" "[:lower:]")
+  [ "${ID%;*}" = "info.json" ] && { FL=$(iso_u32le $I $((DB+O+2))); FS=$(iso_u32le $I $((DB+O+10))); break; }
+  O=$((O+L))
+done
+dd if=$I bs=2048 skip=$FL count=$(((FS+2047)/2048)) 2>/dev/null | dd bs=1 count=$FS 2>/dev/null
+' 2>/dev/null)
+
+    /usr/bin/oc delete pod "${pod_name}" --ignore-not-found --wait=false 2>/dev/null || true
+
+    if [[ -z "${raw}" ]] || ! echo "${raw}" | jq -e '.drivers | type == "array"' >/dev/null 2>&1; then
+        echo "WARNING: Could not extract data/info.json from virtio-win image" >&2
+        return 1
+    fi
+
+    # info.json: [{name, windows_version, arch, driver_version: "date,ver", inf_path}, ...]
+    # -> drivers[name][os][arch] = {version, date, inf_path}
+    drivers_json=$(echo "${raw}" | jq '
+        reduce .drivers[] as $d ({};
+            ($d.driver_version | split(",")) as $parts
+            | .[$d.name][$d.windows_version][$d.arch] = {
+                "version": $parts[1],
+                "date": $parts[0],
+                "inf_path": $d.inf_path
+              }
+        )')
+
+    if [[ -z "${drivers_json}" || "${drivers_json}" == "{}" || "${drivers_json}" == "null" ]]; then
+        echo "WARNING: No driver baselines parsed from data/info.json" >&2
+        return 1
+    fi
+
+    jq -n \
+        --arg image "${virtio_img}" \
+        --argjson drivers "${drivers_json}" \
+        --argjson info "${raw}" \
+        '{"image": $image, "drivers": $drivers, "info_json": $info}' \
+        > "${BASE_COLLECTION_PATH}/virtio-win-baseline.json"
+
+    echo "Baseline written ($(echo "${drivers_json}" | jq '[.. | objects | select(has("version"))] | length') entries)" >&2
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Guest OS info via guest-get-osinfo
+# ---------------------------------------------------------------------------
+
+get_vm_osinfo() {
+    local pod="$1" ns="$2" vm="$3"
+
+    timeout 15 /usr/bin/oc exec -n "${ns}" "${pod}" -c compute -- \
+        virsh qemu-agent-command "${ns}_${vm}" \
+        '{"execute": "guest-get-osinfo"}' 2>/dev/null
+}
+
+get_vm_os_type() {
+    local osinfo="$1"
+    local os_id
+    os_id=$(echo "${osinfo}" | jq -r '.return.id // empty' 2>/dev/null)
+
+    if [[ "${os_id}" == "mswindows" ]]; then
+        echo "windows"
+    elif [[ -n "${os_id}" ]]; then
+        echo "linux"
+    else
+        echo "unknown"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Query a single VM's installed VirtIO drivers via the QEMU guest agent.
+# ---------------------------------------------------------------------------
+
+get_vm_drivers() {
+    local pod="$1" ns="$2" vm="$3"
+
+    local raw
+    raw=$(timeout 30 /usr/bin/oc exec -n "${ns}" "${pod}" -c compute -- \
+        virsh qemu-agent-command "${ns}_${vm}" \
+        '{"execute": "guest-get-devices"}' 2>/dev/null)
+
+    if [[ -z "${raw}" ]]; then
+        return 1
+    fi
+
+    echo "${raw}" | jq -r \
+        "[.return[] | select(.id.\"vendor-id\" == ${VIRTIO_VENDOR_ID}) |
+         {name: .\"driver-name\", version: .\"driver-version\",
+          device_id: (.id.\"device-id\" | tostring)}]"
+}
+
+# ---------------------------------------------------------------------------
+# Compare installed version against baseline. Outputs a status string.
+# ---------------------------------------------------------------------------
+
+compare_versions() {
+    local installed="$1" baseline="$2"
+
+    IFS='.' read -ra inst <<< "${installed}"
+    IFS='.' read -ra base <<< "${baseline}"
+
+    local max=${#inst[@]}
+    if (( ${#base[@]} > max )); then
+        max=${#base[@]}
+    fi
+
+    for (( i=0; i<max; i++ )); do
+        if (( ${inst[$i]:-0} < ${base[$i]:-0} )); then
+            echo "OUTDATED"
+            return
+        elif (( ${inst[$i]:-0} > ${base[$i]:-0} )); then
+            echo "NEWER"
+            return
+        fi
+    done
+    echo "OK"
+}
+
+# ---------------------------------------------------------------------------
+# Look up baseline version for a driver name + OS folder + arch
+# ---------------------------------------------------------------------------
+
+lookup_baseline() {
+    local name="$1" os_folder="$2" arch="$3"
+    local baseline_file="${BASE_COLLECTION_PATH}/virtio-win-baseline.json"
+
+    jq -r --arg n "${name}" --arg o "${os_folder}" --arg a "${arch}" \
+        '.drivers[$n][$o][$a].version // empty' "${baseline_file}" 2>/dev/null
+}
+
+lookup_baseline_date() {
+    local name="$1" os_folder="$2" arch="$3"
+    local baseline_file="${BASE_COLLECTION_PATH}/virtio-win-baseline.json"
+
+    jq -r --arg n "${name}" --arg o "${os_folder}" --arg a "${arch}" \
+        '.drivers[$n][$o][$a].date // empty' "${baseline_file}" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# Check a single VM and write results.
+# ---------------------------------------------------------------------------
+
+check_vm() {
+    local ns="$1" pod="$2" vm="$3"
+
+    local vm_path="${BASE_COLLECTION_PATH}/namespaces/${ns}/vms/${vm}"
+    mkdir -p "${vm_path}"
+
+    local osinfo
+    osinfo=$(get_vm_osinfo "${pod}" "${ns}" "${vm}")
+
+    local os_type
+    os_type=$(get_vm_os_type "${osinfo}")
+
+    if [[ "${os_type}" == "linux" ]]; then
+        echo "  Skipping ${vm} (${ns}): Linux VM"
+        echo "SKIPPED_LINUX"
+        return
+    fi
+
+    if [[ "${os_type}" == "unknown" || -z "${osinfo}" ]]; then
+        echo "  Skipping ${vm} (${ns}): could not determine OS type (guest agent may not be installed)"
+        echo "SKIPPED"
+        return
+    fi
+
+    local version_id variant version pretty kernel_release machine
+    version_id=$(echo "${osinfo}" | jq -r '.return."version-id" // empty')
+    variant=$(echo "${osinfo}" | jq -r '.return."variant-id" // .return.variant // empty')
+    version=$(echo "${osinfo}" | jq -r '.return.version // empty')
+    pretty=$(echo "${osinfo}" | jq -r '.return."pretty-name" // empty')
+    kernel_release=$(echo "${osinfo}" | jq -r '.return."kernel-release" // empty')
+    machine=$(echo "${osinfo}" | jq -r '.return.machine // empty')
+
+    local os_folder arch
+    os_folder=$(map_guest_os_folder "${version_id}" "${variant}" "${version}" "${pretty}" "${kernel_release}")
+    arch=$(map_guest_arch "${machine}")
+
+    if [[ "${os_folder}" == "unknown" ]]; then
+        echo "  WARNING: ${vm} (${ns}): could not map guest OS to virtio-win folder (version-id=${version_id})"
+    fi
+
+    local drivers
+    drivers=$(get_vm_drivers "${pod}" "${ns}" "${vm}")
+
+    if [[ -z "${drivers}" || "${drivers}" == "[]" ]]; then
+        jq -n --arg vm "${vm}" --arg ns "${ns}" \
+            --arg os_folder "${os_folder}" --arg arch "${arch}" \
+            '{"vm": $vm, "namespace": $ns, "os_folder": $os_folder, "arch": $arch,
+              "error": "guest-get-devices returned no data"}' \
+            > "${vm_path}/virtio-driver-report.json"
+        echo "SKIPPED"
+        return
+    fi
+
+    echo "${drivers}" > "${vm_path}/virtio-driver-installed.json"
+
+    local report="[]"
+    local count
+    count=$(echo "${drivers}" | jq 'length')
+
+    for (( i=0; i<count; i++ )); do
+        local name version baseline_ver baseline_date status
+        name=$(echo "${drivers}" | jq -r ".[$i].name")
+        version=$(echo "${drivers}" | jq -r ".[$i].version")
+
+        baseline_ver=$(lookup_baseline "${name}" "${os_folder}" "${arch}")
+        baseline_date=$(lookup_baseline_date "${name}" "${os_folder}" "${arch}")
+
+        if [[ -n "${baseline_ver}" ]]; then
+            status=$(compare_versions "${version}" "${baseline_ver}")
+        else
+            baseline_ver="N/A"
+            baseline_date=""
+            status="UNKNOWN"
+        fi
+
+        report=$(echo "${report}" | jq \
+            --arg name "${name}" \
+            --arg installed "${version}" \
+            --arg baseline "${baseline_ver}" \
+            --arg baseline_date "${baseline_date}" \
+            --arg status "${status}" \
+            '. + [{"driver": $name, "installed": $installed, "baseline": $baseline,
+                   "baseline_date": $baseline_date, "status": $status}]')
+    done
+
+    jq -n \
+        --arg vm "${vm}" \
+        --arg ns "${ns}" \
+        --arg os_folder "${os_folder}" \
+        --arg arch "${arch}" \
+        --arg version_id "${version_id}" \
+        --arg pretty "${pretty}" \
+        --argjson drivers "${report}" \
+        '{"vm": $vm, "namespace": $ns, "guest": {
+            "pretty_name": $pretty, "version_id": $version_id,
+            "os_folder": $os_folder, "arch": $arch
+         }, "drivers": $drivers}' \
+        > "${vm_path}/virtio-driver-report.json"
+
+    if echo "${report}" | jq -e '[.[] | select(.status == "OUTDATED")] | length > 0' >/dev/null 2>&1; then
+        echo "OUTDATED"
+    else
+        echo "OK"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+echo "========================================"
+echo "VirtIO Driver Version Check (Windows VMs)"
+echo "Timeout: ${DRIVER_CHECK_TIMEOUT}s"
+echo "========================================"
+
+if ! get_baseline; then
+    echo "ERROR: Could not determine baseline driver versions. Skipping driver check." >&2
+    jq -n '{"error": "could not determine baseline versions"}' > "${BASE_COLLECTION_PATH}/virtio-win-summary.json"
+    exit 0
+fi
+
+check_timeout || exit 0
+
+total=0
+checked=0
+outdated_count=0
+skipped=0
+
+if [[ -n "${VM:-}" && -z "${NS:-}" ]]; then
+    echo "ERROR: VM is set but NS is not. Cannot check a specific VM without a namespace." >&2
+    exit 1
+fi
+
+if [[ -n "${NS:-}" ]]; then
+    if [[ -n "${VM:-}" ]]; then
+        echo "Checking VM ${VM} in namespace ${NS}"
+        mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod -n "${NS}" \
+            -l "kubevirt.io=virt-launcher" \
+            --field-selector=status.phase=Running \
+            --no-headers \
+            -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
+            | awk -v vm="${VM}" '$3 == vm {print $1 " " $2 " " $3}')
+    else
+        echo "Checking all running VMs in namespace ${NS}"
+        mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod -n "${NS}" \
+            -l kubevirt.io=virt-launcher \
+            --field-selector=status.phase=Running \
+            --no-headers \
+            -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
+            | awk '{print $1 " " $2 " " $3}')
+    fi
+else
+    echo "Checking all running VMs"
+    mapfile -t PODS < <(timeout 30 /usr/bin/oc get pod --all-namespaces \
+        -l kubevirt.io=virt-launcher \
+        --field-selector=status.phase=Running \
+        --no-headers \
+        -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,VM:.metadata.annotations.kubevirt\.io/domain" \
+        | awk '{print $1 " " $2 " " $3}')
+fi
+
+if [[ ${#PODS[@]} -eq 1 && -z "${PODS[0]}" ]]; then
+    PODS=()
+fi
+
+total=${#PODS[@]}
+echo "Found ${total} running VM(s)"
+
+for entry in "${PODS[@]}"; do
+    check_timeout || break
+
+    read -r ns pod vm <<< "${entry}"
+    echo "Checking ${vm} (${ns})..."
+
+    result=$(check_vm "${ns}" "${pod}" "${vm}")
+
+    case "${result}" in
+        OUTDATED) checked=$((checked+1)); outdated_count=$((outdated_count+1)) ;;
+        OK)       checked=$((checked+1)) ;;
+        SKIPPED*) skipped=$((skipped+1)) ;;
+    esac
+done
+
+jq -n \
+    --argjson total "${total}" \
+    --argjson checked "${checked}" \
+    --argjson outdated "${outdated_count}" \
+    --argjson skipped "${skipped}" \
+    '{"total_vms": $total, "checked": $checked, "outdated": $outdated, "skipped": $skipped}' \
+    > "${BASE_COLLECTION_PATH}/virtio-win-summary.json"
+
+echo "========================================"
+echo "Driver check complete."
+echo "  Checked: ${checked}, Outdated: ${outdated_count}, Skipped: ${skipped}"
+echo "========================================"
+
+exit 0

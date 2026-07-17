@@ -351,6 +351,67 @@ no further collection is needed. If it narrows the problem but more context is r
 customer can then run a full CNV must-gather, OCP must-gather, or sosreports — but the
 support engineer already knows where to look.
 
+### VirtIO driver version check
+
+Check whether Windows VMs are running outdated VirtIO drivers by comparing
+installed versions (queried via the QEMU guest agent) against the baseline
+shipped with the cluster's virtio-win container disk.
+
+Only Windows VMs are checked. The OS type is detected via `guest-get-osinfo`,
+so Linux VMs are skipped even if they have a guest agent installed. VMs without
+the QEMU guest agent are also skipped.
+
+Check a specific VM:
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- NS=default VM=myvm \
+   /usr/bin/gather --virtio_win_driver_check
+```
+
+Check all VMs in a namespace:
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- NS=default \
+   /usr/bin/gather --virtio_win_driver_check
+```
+
+Check all running Windows VMs:
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- /usr/bin/gather \
+   --virtio_win_driver_check
+```
+
+The driver check also runs automatically as part of `--vm-incident`.
+
+#### Output
+
+Per-VM results follow the standard must-gather output format under
+`namespaces/<ns>/vms/<vm>/`:
+
+| File | Description |
+|---|---|
+| `virtio-win-baseline.json` | Virtio-win container disk image reference and expected driver version |
+| `virtio-win-summary.json` | Cluster-wide totals: VMs checked, outdated, skipped |
+| `namespaces/<ns>/vms/<vm>/virtio-driver-report.json` | Per-driver comparison with status (OK, OUTDATED, NEWER) |
+| `namespaces/<ns>/vms/<vm>/virtio-driver-installed.json` | Raw guest agent device data (VirtIO devices only) |
+
+#### Timeout
+
+The driver check is timeboxed to 10 minutes by default (configurable via
+`DRIVER_CHECK_TIMEOUT`):
+
+```sh
+oc adm must-gather \
+   --image=quay.io/kubevirt/must-gather \
+   -- DRIVER_CHECK_TIMEOUT=120 \
+   /usr/bin/gather \
+   --virtio_win_driver_check
+```
+
 ### Targeted gathering - Images information
 
 It is possible to collect image, image-stream and image-stream-tags information using the `--images` flag:
