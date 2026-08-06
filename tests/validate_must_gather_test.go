@@ -1086,11 +1086,27 @@ var _ = Describe("validate the must-gather output", func() {
 			Expect(err).ToNot(HaveOccurred())
 			metricsStr := string(metricsContent)
 
+			// For direct-selector queries Prometheus returns __name__ which
+			// is used as the metric name instead of the slug.  Verify each
+			// collected metric has a HELP/TYPE line under either name.
 			for _, m := range metadata.Items {
-				Expect(metricsStr).To(ContainSubstring("# HELP "+m.Slug),
-					fmt.Sprintf("metrics file should contain HELP line for collected metric %s/%s", m.Category, m.Slug))
-				Expect(metricsStr).To(MatchRegexp(`# TYPE `+regexp.QuoteMeta(m.Slug)+` (gauge|counter|histogram|summary)`),
-					fmt.Sprintf("metrics file should contain TYPE line for collected metric %s/%s", m.Category, m.Slug))
+				helpBySlug := strings.Contains(metricsStr, "# HELP "+m.Slug+" ")
+				helpByConf := false
+				for _, line := range strings.Split(string(confContent), "\n") {
+					parts := strings.SplitN(line, "|", 4)
+					if len(parts) >= 3 && parts[1] == m.Slug {
+						query := strings.TrimSpace(parts[2])
+						// extract the leading metric name from the PromQL template
+						promName := strings.SplitN(query, "{", 2)[0]
+						promName = strings.SplitN(promName, "(", 2)[0]
+						if strings.Contains(metricsStr, "# HELP "+promName+" ") {
+							helpByConf = true
+						}
+						break
+					}
+				}
+				Expect(helpBySlug || helpByConf).To(BeTrue(),
+					fmt.Sprintf("metrics file should contain a HELP line for collected metric %s/%s (by slug or original Prometheus name)", m.Category, m.Slug))
 			}
 
 			for _, s := range metadata.Skipped {
@@ -1099,6 +1115,95 @@ var _ = Describe("validate the must-gather output", func() {
 
 			logger.Printf("  metrics accounting: %d total (%d collected, %d skipped)",
 				metadata.Total, metadata.Collected, len(metadata.Skipped))
+		})
+
+		It("should produce valid OpenMetrics with no __name__ label in data lines", func() {
+			metricsFile := path.Join(incidentDir, "incident-metrics", "incident-metrics.txt")
+			content, err := os.ReadFile(metricsFile)
+			Expect(err).ToNot(HaveOccurred(), "incident-metrics.txt should be readable")
+
+			namePattern := regexp.MustCompile(`__name__\s*=`)
+			violations := []string{}
+			for i, line := range strings.Split(string(content), "\n") {
+				if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
+					continue
+				}
+				if namePattern.MatchString(line) {
+					violations = append(violations, fmt.Sprintf("  line %d: %s", i+1, line[:min(len(line), 120)]))
+				}
+			}
+			Expect(violations).To(BeEmpty(),
+				"OpenMetrics data lines must not contain an explicit __name__ label "+
+					"(the metric name before '{' already serves as __name__). Violations:\n"+
+					strings.Join(violations, "\n"))
+			logger.Printf("  scanned %d lines for __name__ violations — none found", len(strings.Split(string(content), "\n")))
+		})
+
+		It("should have no duplicate HELP or TYPE declarations for the same metric name", func() {
+			metricsFile := path.Join(incidentDir, "incident-metrics", "incident-metrics.txt")
+			content, err := os.ReadFile(metricsFile)
+			Expect(err).ToNot(HaveOccurred())
+
+			helpCounts := map[string]int{}
+			typeCounts := map[string]int{}
+			for _, line := range strings.Split(string(content), "\n") {
+				if strings.HasPrefix(line, "# HELP ") {
+					parts := strings.SplitN(strings.TrimPrefix(line, "# HELP "), " ", 2)
+					if len(parts) >= 1 {
+						helpCounts[parts[0]]++
+					}
+				}
+				if strings.HasPrefix(line, "# TYPE ") {
+					parts := strings.SplitN(strings.TrimPrefix(line, "# TYPE "), " ", 2)
+					if len(parts) >= 1 {
+						typeCounts[parts[0]]++
+					}
+				}
+			}
+
+			duplicates := []string{}
+			for name, count := range helpCounts {
+				if count > 1 {
+					duplicates = append(duplicates, fmt.Sprintf("  # HELP %s appears %d times", name, count))
+				}
+			}
+			for name, count := range typeCounts {
+				if count > 1 {
+					duplicates = append(duplicates, fmt.Sprintf("  # TYPE %s appears %d times", name, count))
+				}
+			}
+			Expect(duplicates).To(BeEmpty(),
+				"OpenMetrics requires unique HELP/TYPE declarations per metric name. Duplicates:\n"+
+					strings.Join(duplicates, "\n"))
+		})
+
+		It("should have unique slugs in incident_metrics.conf", func() {
+			confPath := path.Join(incidentDir, "incident-metrics", "incident_metrics.conf")
+			confContent, err := os.ReadFile(confPath)
+			Expect(err).ToNot(HaveOccurred())
+
+			slugCounts := map[string]int{}
+			for _, line := range strings.Split(string(confContent), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				parts := strings.SplitN(line, "|", 4)
+				if len(parts) >= 2 {
+					slugCounts[parts[1]]++
+				}
+			}
+
+			duplicates := []string{}
+			for slug, count := range slugCounts {
+				if count > 1 {
+					duplicates = append(duplicates, fmt.Sprintf("  slug %q appears %d times", slug, count))
+				}
+			}
+			Expect(duplicates).To(BeEmpty(),
+				"incident_metrics.conf slugs must be unique — duplicates produce invalid OpenMetrics "+
+					"(duplicate HELP/TYPE declarations). Duplicates:\n"+
+					strings.Join(duplicates, "\n"))
 		})
 
 		It("should collect virsh and QEMU data when VM has not restarted", func() {

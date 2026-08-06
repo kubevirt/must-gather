@@ -99,14 +99,15 @@ collect_incident_metrics() {
         fi
 
         if echo "${response}" | jq -r --arg slug "${slug}" --arg desc "${description}" '
-            "# HELP " + $slug + " " + $desc,
-            "# TYPE " + $slug + " gauge",
+            (.data.result[0].metric.__name__ // $slug) as $name |
+            "# HELP " + $name + " " + $desc,
+            "# TYPE " + $name + " gauge",
             (
                 .data.result[] |
                 .metric as $m |
-                ($m | to_entries | map(.key + "=\"" + .value + "\"") | join(",")) as $labels |
+                ($m | to_entries | map(select(.key != "__name__")) | map(.key + "=\"" + .value + "\"") | join(",")) as $labels |
                 .values[] |
-                $slug + "{" + $labels + "} " + .[1] + " " + (.[0] | tostring)
+                $name + "{" + $labels + "} " + .[1] + " " + (.[0] | tostring)
             )
         ' >> "${metrics_file}" 2>/dev/null; then
             ok=$(( ok + 1 ))
