@@ -110,6 +110,48 @@ func (r ReferenceName) IsTag() bool {
 	return strings.HasPrefix(string(r), refTagPrefix)
 }
 
+// IsSafe reports whether the reference name can be safely turned into a path
+// under the .git directory, mirroring Git's refname_is_safe (refs.c). A name
+// is safe when it is either:
+//
+//   - under "refs/", non-empty after the prefix, containing no backslash and
+//     no empty, "." or ".." path component (so it cannot escape the refs/
+//     sub-tree, or alias another name, once turned into a path); or
+//   - a one-level pseudo-ref whose spelling is restricted to [A-Z_]
+//     (e.g. HEAD, ORIG_HEAD, FETCH_HEAD).
+//
+// Everything else — a lowercase or mixed one-level name such as "config" or
+// "index", an absolute or drive-prefixed name, or a refs/ name that escapes —
+// is unsafe, because it could resolve onto unrelated repository metadata.
+func (r ReferenceName) IsSafe() bool {
+	s := string(r)
+	if s == "" {
+		return false
+	}
+
+	if rest, ok := strings.CutPrefix(s, refPrefix); ok {
+		// '\' is a path separator on Windows, so a refs/ name containing one
+		// could escape the sub-tree or alias another name once turned into a
+		// path; reject it outright (check_refname_format forbids '\' too).
+		if rest == "" || strings.Contains(rest, "\\") {
+			return false
+		}
+		for part := range strings.SplitSeq(rest, "/") {
+			if part == "" || part == "." || part == ".." {
+				return false
+			}
+		}
+		return true
+	}
+
+	for i := 0; i < len(s); i++ {
+		if (s[i] < 'A' || s[i] > 'Z') && s[i] != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 func (r ReferenceName) String() string {
 	return string(r)
 }
@@ -188,7 +230,7 @@ func (r ReferenceName) Validate() error {
 
 	isBranch := r.IsBranch()
 	isTag := r.IsTag()
-	for _, part := range parts {
+	for i, part := range parts {
 		// rule 6
 		if len(part) == 0 {
 			return ErrInvalidReferenceName
@@ -205,7 +247,7 @@ func (r ReferenceName) Validate() error {
 			return ErrInvalidReferenceName
 		}
 
-		if (isBranch || isTag) && strings.HasPrefix(part, "-") { // branches & tags can't start with -
+		if (isBranch || isTag) && strings.HasPrefix(part, "-") && (i == 2) { // branches & tags can't start with -
 			return ErrInvalidReferenceName
 		}
 	}
