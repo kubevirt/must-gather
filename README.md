@@ -338,10 +338,56 @@ promtool tsdb create-blocks-from openmetrics incident-metrics.txt
 This creates TSDB blocks in a `data/` directory that can be copied into your Prometheus data
 directory. After restarting Prometheus, the historical metrics become queryable.
 
+If you don't have `promtool` installed locally, you can run the full workflow with Podman:
+import the metrics **and** start a throwaway Prometheus instance ready for Grafana.
+
+```sh
+# Create a working directory with the metrics file
+mkdir -p prom-backfill
+cp incident-metrics/incident-metrics.txt prom-backfill/
+
+# Generate TSDB blocks from the OpenMetrics file
+podman run --rm \
+  -v ./prom-backfill:/data:Z \
+  quay.io/prometheus/prometheus:latest \
+  promtool tsdb create-blocks-from openmetrics /data/incident-metrics.txt \
+  --output-dir /data/tsdb-blocks
+
+# Start a Prometheus instance serving the backfilled data
+podman run --rm -d --name prom-incident \
+  -p 9090:9090 \
+  -v ./prom-backfill/tsdb-blocks:/prometheus:Z \
+  quay.io/prometheus/prometheus:latest \
+  --storage.tsdb.path=/prometheus \
+  --storage.tsdb.retention.time=90d
+```
+
+Then point Grafana (or a browser) at `http://localhost:9090` to query the incident
+metrics. When done, stop the container with `podman stop prom-incident`.
+
 **VictoriaMetrics**:
 ```sh
 curl -X POST 'http://localhost:8428/api/v1/import/prometheus' \
   --data-binary @incident-metrics.txt
+```
+
+Or with Podman:
+
+```sh
+# Start a throwaway VictoriaMetrics instance
+podman run --rm -d --name vm-incident \
+  -p 8428:8428 \
+  -v vm-incident-data:/victoria-metrics-data:Z \
+  docker.io/victoriametrics/victoria-metrics:stable
+
+# Import the metrics
+curl -X POST 'http://localhost:8428/api/v1/import/prometheus' \
+  --data-binary @incident-metrics/incident-metrics.txt
+
+# Query at http://localhost:8428/vmui
+# When done:
+podman stop vm-incident
+podman volume rm vm-incident-data
 ```
 
 #### Workflow
