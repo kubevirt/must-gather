@@ -13,7 +13,8 @@
 #   df,mounts,mountstats,diskstats,pressure_*,nfs_module_params,nfs.conf,nfs_modprobe,
 #   nfs_sysctl,nfs_sysfs,nfs_slot_tuning_service,nfs_mountstats_delays,tuned_*,
 #   kernel_red_flags.log,bridge,vlan,nftables,sys_sriov_numvfs,sys_sriov_totalvfs,
-#   dev_vfio,opt-cni-bin,var-lib-cni-bin,pcidp_config.json,audit.log}
+#   dev_vfio,opt-cni-bin,var-lib-cni-bin,pcidp_config.json,audit.log,
+#   kubevirt-private/ghost-records/<vmi-uid>}
 
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # shellcheck source=common.sh
@@ -291,6 +292,8 @@ collect_node() {
     if timeout 10 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- [ -f /host/etc/pcidp/config.json ] 2>/dev/null; then
         timeout 60 oc cp "${NODE_GATHER_POD}:/host/etc/pcidp/config.json" "${NODE_PATH}/pcidp_config.json" -n node-gather 2>/dev/null || true
     fi
+
+    collect_virt_handler_ghost_records "${NODE_GATHER_POD}" "${NODE_PATH}"
 
     # audit.log can be hundreds of MB; skip in incident mode, cap at 50 MB in default mode
     if [[ -z "${TARGET_NODE}" ]]; then
