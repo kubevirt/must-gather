@@ -85,3 +85,22 @@ query_prometheus_range() {
 	echo "${result}"
 	eval "$_xtrace"
 }
+
+# Collect virt-handler ghost record checkpoint files via a node-gather pod.
+# Ghost records are on the host under /run/kubevirt-private/ghost-records; node-gather
+# mounts host /run at /host/run.
+# Args: <node_gather_pod> <dest_node_path>
+collect_virt_handler_ghost_records() {
+	local node_gather_pod="$1"
+	local node_path="$2"
+	local ghost_dir="/host/run/kubevirt-private/ghost-records"
+
+	if ! timeout 10 /usr/bin/oc exec "${node_gather_pod}" -n node-gather -- \
+		[ -d "${ghost_dir}" ] 2>/dev/null; then
+		return 1
+	fi
+
+	mkdir -p "${node_path}/kubevirt-private"
+	timeout 60 oc cp "${node_gather_pod}:${ghost_dir}/." "${node_path}/kubevirt-private/ghost-records/" \
+		-n node-gather 2>/dev/null || true
+}

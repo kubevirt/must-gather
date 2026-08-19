@@ -15,7 +15,7 @@ You will get a dump of:
 - The Hyperconverged Cluster Operator namespaces (and its children objects)
 - All namespaces (and their children objects) that belong to any KubeVirt resources
 - All KubeVirt CRD's definitions
-- Per-node system and storage diagnostics (dmesg, dmidecode, sysctl, NFS config, PSI counters, kernel red-flag scan)
+- Per-node system and storage diagnostics (dmesg, dmidecode, sysctl, NFS config, PSI counters, kernel red-flag scan, virt-handler ghost records)
 - CNV guest events (GuestPanicked, LivenessProbeFailed) across VM namespaces
 - Prometheus instant metrics (cluster utilization, VM phases, storage latencies, NFS counters)
 - ClusterRole definitions (cluster-reader posture, KubeVirt RBAC baseline)
@@ -247,6 +247,11 @@ Everything below is scoped to the incident node and time window — no cluster-w
 - `/proc/mounts` — mount table
 - NFS client config (`nfs.conf`, module parameters, modprobe rules)
 
+**virt-handler ghost records** (`nodes/<node>/kubevirt-private/ghost-records/`)
+- Per-VMI checkpoint files (one JSON file per UID) persisted by virt-handler on the node
+- Maps VMIs to libvirt domain sockets; useful for debugging stale domains and missing checkpoints
+- Collected from the host via node-gather; falls back to the virt-handler pod when node-gather is unavailable
+
 **Cluster health snapshot** (`cluster-scoped-resources/`)
 - ClusterOperators, nodes overview, MachineConfigPools
 - `oc adm top node` for the incident node
@@ -264,6 +269,7 @@ Everything below is scoped to the incident node and time window — no cluster-w
 **Pod logs** (`namespaces/<ns>/core/pods/`)
 - virt-launcher pod: all containers, current and previous logs (captures crash output)
 - virt-handler pod on the incident node: current and previous logs
+- virt-handler ghost record checkpoint files on the incident node (see above)
 
 **Live VM state** (`namespaces/<ns>/vms/<vm>/`) — only if the VM has NOT restarted since the
 incident; skipped automatically when the pod postdates the incident, since that data would

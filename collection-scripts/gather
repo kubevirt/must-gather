@@ -112,7 +112,8 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
     Requires NS and VM environment variables. Skips all other collectors.
     Automatically identifies the node via Prometheus metrics and collects:
     - Host: dmesg, journal, kubelet, dmidecode, sysctl, chrony, ip config,
-      storage diagnostics (mountstats, diskstats, PSI), NFS config, kernel red-flags
+      storage diagnostics (mountstats, diskstats, PSI), NFS config, kernel red-flags,
+      virt-handler ghost records
     - Cluster: ClusterOperators, nodes, MachineConfigPools, KubeVirt version,
       VMIs on incident node (noisy-neighbor detection)
     - VM: definitions, PVC/PV/StorageClass/DataVolume chain, namespace events
