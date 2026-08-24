@@ -141,6 +141,288 @@ collect_incident_metrics() {
     set -x
 }
 
+# Bridge the VM's PVCs/PVs to the physical block devices on the incident node so
+# support can attribute node-wide storage events (multipath flap, disk_io_util,
+# high-latency dm-*/sd*) to this specific VM instead of flagging an unresolvable gap.
+#
+# Chain: PVC -> PV -> csi.volumeHandle -> host dm-*/sd* device -> WWID / multipath paths
+#
+# The reliable node-side link is the kubelet CSI publish/staging path, which resolves
+# (via device major:minor) to the real kernel device regardless of how the CSI driver
+# named it. Block-mode volumes resolve through .../csi/volumeDevices/, filesystem-mode
+# volumes through the kubelet mount table (/proc/mounts). Requires the node-gather pod;
+# without it, only the cluster-side PV/volumeHandle metadata is recorded.
+collect_storage_device_mapping() {
+    echo "Mapping VM storage to host block devices (PVC/PV -> volumeHandle -> device)..."
+    local map_dir="${BASE_COLLECTION_PATH}/namespaces/${NS}/vms/${VM}"
+    local node_path="${BASE_COLLECTION_PATH}/nodes/${INCIDENT_NODE}"
+    mkdir -p "${map_dir}" "${node_path}"
+    local report="${map_dir}/storage-device-mapping.txt"
+    local json_out="${map_dir}/storage-device-mapping.json"
+    local tsv
+    tsv=$(mktemp)
+
+    { set +x; } 2>/dev/null
+
+    # --- Cluster side: enumerate the VM's PVCs -> PVs ---
+    local pvcs
+    pvcs=$(timeout 30 /usr/bin/oc get vm "${VM}" -n "${NS}" --request-timeout=30s \
+        -o jsonpath='{range .spec.template.spec.volumes[*]}{.persistentVolumeClaim.claimName}{"\n"}{.dataVolume.name}{"\n"}{end}' 2>/dev/null \
+        | grep -v '^$' | sort -u)
+
+    if [[ -z "${pvcs}" ]]; then
+        echo "  No PVCs found for VM ${VM}; skipping device mapping."
+        skipped "storage device mapping (no PVCs found for VM)"
+        rm -f "${tsv}"
+        set -x
+        return
+    fi
+
+    local -A PV_OF_PVC
+    local pv_list=()
+    local pvc pv
+    while read -r pvc; do
+        [[ -z "${pvc}" ]] && continue
+        pv=$(timeout 30 /usr/bin/oc get pvc "${pvc}" -n "${NS}" --request-timeout=30s -o jsonpath='{.spec.volumeName}' 2>/dev/null)
+        [[ -z "${pv}" ]] && continue
+        PV_OF_PVC["${pvc}"]="${pv}"
+        pv_list+=("${pv}")
+    done <<< "${pvcs}"
+
+    # VolumeAttachments (one query, filtered per-PV below)
+    local va_json
+    va_json=$(timeout 30 /usr/bin/oc get volumeattachments -o json --request-timeout=30s 2>/dev/null)
+
+    # --- Node side: resolve each PV to its host block device ---
+    # Emits, per PV: "DEV\t<pv>\t<devpath>\t<maj:min>\t<kname>\t<wwid>\t<mpath>\t<slaves>",
+    # "NET\t<pv>\t<source>" for network/file-backed volumes, or "NODEV\t<pv>".
+    local node_resolve_script
+    node_resolve_script=$(cat <<'EOS'
+set +e
+devrow() {
+    local pv="$1" src="$2" real hex majmin kname wwid mpath slaves l
+    real=$(readlink -f "$src" 2>/dev/null)
+    [ -b "$real" ] || return 0
+    hex=$(stat -L -c '%t:%T' "$real" 2>/dev/null)
+    [ -n "$hex" ] || return 0
+    majmin=$(( 16#${hex%%:*} )):$(( 16#${hex##*:} ))
+    kname=$(basename "$(readlink -f "/sys/dev/block/${majmin}" 2>/dev/null)" 2>/dev/null)
+    [ -n "$kname" ] || return 0
+    mpath=$(dmsetup info -c --noheadings -o name "$kname" 2>/dev/null)
+    wwid=$(dmsetup info -c --noheadings -o uuid "$kname" 2>/dev/null)
+    if [ -z "$wwid" ]; then
+        for l in /dev/disk/by-id/*; do
+            [ -e "$l" ] || continue
+            [ "$(basename "$(readlink -f "$l" 2>/dev/null)")" = "$kname" ] || continue
+            case "$(basename "$l")" in
+                wwn-*|scsi-3*|nvme-eui*|dm-uuid-*) wwid=$(basename "$l"); break ;;
+            esac
+        done
+    fi
+    slaves=$(ls "/sys/block/${kname}/slaves" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
+    printf 'DEV\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$pv" "$real" "$majmin" "$kname" "$wwid" "$mpath" "$slaves"
+    return 1
+}
+for pv in "$@"; do
+    found=0
+    for base in \
+        "/var/lib/kubelet/plugins/kubernetes.io/csi/volumeDevices/publish/${pv}" \
+        "/var/lib/kubelet/plugins/kubernetes.io/csi/volumeDevices/staging/${pv}" \
+        "/var/lib/kubelet/plugins/kubernetes.io/csi/volumeDevices/${pv}"; do
+        [ -e "$base" ] || continue
+        while IFS= read -r p; do
+            devrow "$pv" "$p" || found=1
+        done < <(find "$base" -mindepth 1 -maxdepth 4 2>/dev/null)
+    done
+    while read -r src mnt _; do
+        case "$mnt" in
+            *"/${pv}/"*|*"/${pv}")
+                if [ "${src#/dev/}" != "$src" ]; then
+                    devrow "$pv" "$src" || found=1
+                else
+                    printf 'NET\t%s\t%s\n' "$pv" "$src"; found=1
+                fi ;;
+        esac
+    done < /proc/mounts
+    [ "$found" -eq 0 ] && printf 'NODEV\t%s\n' "$pv"
+done
+EOS
+)
+
+    local resolution=""
+    if [[ -n "${NODE_GATHER_POD}" && ${#pv_list[@]} -gt 0 ]]; then
+        echo "  Collecting host block-device inventory from ${INCIDENT_NODE}..."
+        timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- \
+            lsblk -o NAME,KNAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,WWN,SERIAL,HCTL,VENDOR,MODEL 2>/dev/null \
+            > "${node_path}/block_devices"
+        timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- \
+            lsblk -O -J 2>/dev/null > "${node_path}/block_devices.json"
+        timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- \
+            multipath -ll 2>/dev/null > "${node_path}/multipath"
+        timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- \
+            /bin/bash -c 'ls -l /dev/disk/by-id 2>/dev/null' > "${node_path}/dev_disk_by_id"
+        timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- \
+            /bin/bash -c 'ls -l /dev/disk/by-path 2>/dev/null' > "${node_path}/dev_disk_by_path"
+        timeout 60 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- \
+            /bin/bash -c 'dmsetup ls --tree 2>/dev/null; echo "--- dmsetup info ---"; dmsetup info -c 2>/dev/null' \
+            > "${node_path}/dmsetup"
+        # Drop empty artifacts (e.g. multipath not configured on this host)
+        for f in block_devices block_devices.json multipath dev_disk_by_id dev_disk_by_path dmsetup; do
+            [[ -s "${node_path}/${f}" ]] || rm -f "${node_path}/${f}"
+        done
+
+        echo "  Resolving PV -> host device for ${#pv_list[@]} volume(s)..."
+        resolution=$(timeout 90 /usr/bin/oc exec "${NODE_GATHER_POD}" -n node-gather -- nsenter --mount=/host/proc/1/ns/mnt -- \
+            /bin/bash -c "${node_resolve_script}" bash "${pv_list[@]}" 2>/dev/null)
+        printf '%s\n' "${resolution}" > "${node_path}/pv_device_resolution"
+    else
+        echo "  WARNING: node-gather pod unavailable; recording cluster-side PV/volumeHandle metadata only."
+    fi
+
+    # Index node resolution by PV (dedup DEV rows by kname, keep NET sources)
+    local -A DEVROWS NETROWS
+    if [[ -n "${resolution}" ]]; then
+        local tag rpv rpath rmm rkname rwwid rmpath rslaves
+        while IFS=$'\t' read -r tag rpv rpath rmm rkname rwwid rmpath rslaves; do
+            case "${tag}" in
+                DEV)
+                    [[ "${DEVROWS[${rpv}]}" == *"|${rkname}|"* ]] && continue
+                    DEVROWS[${rpv}]+="|${rkname}|	${rpath}	${rmm}	${rkname}	${rwwid}	${rmpath}	${rslaves}"$'\n'
+                    ;;
+                NET)
+                    [[ "${NETROWS[${rpv}]}" == *"${rpath}"$'\n'* ]] && continue
+                    NETROWS[${rpv}]+="${rpath}"$'\n'
+                    ;;
+            esac
+        done <<< "${resolution}"
+    fi
+
+    # --- Assemble report + TSV ---
+    {
+        echo "VM storage -> host block device mapping"
+        echo "========================================"
+        echo "VM:            ${NS}/${VM}"
+        echo "Node:          ${INCIDENT_NODE}"
+        echo "Incident time: ${INCIDENT_TIME}"
+        echo ""
+        echo "STABLE KEY: use the WWID to attribute node-wide storage events to this VM."
+        echo "The dm-*/sd* kernel names below are point-in-time (resolved at must-gather"
+        echo "collection, which may be hours after the incident). A multipath device is 1:N"
+        echo "over its SCSI paths, and both dm-* and sd* names can be reassigned across a"
+        echo "path rescan, reboot, or live-migration — so a name seen in the incident-time"
+        echo "journal/metrics is only trustworthy when cross-checked against the WWID."
+        echo ""
+        echo "How to correlate:"
+        echo "  1. Take the WWID for this VM's volume below."
+        echo "  2. In incident-metrics/, map that WWID to the incident-time device name via"
+        echo "     node_disk_info{wwn=...} (label 'device'), since dm-*/sd* names may have"
+        echo "     changed since. Then read disk_io_time_by_device / disk_*_latency /"
+        echo "     disk_io_now for that device label."
+        echo "  3. In nodes/${INCIDENT_NODE}/multipath and kernel_red_flags.log /"
+        echo "     ${INCIDENT_NODE}_logs_journal, grep the WWID and each underlying sd* path"
+        echo "     for 'failing path'/'reinstating path' flap events."
+        echo ""
+    } > "${report}"
+
+    local sc driver vh mode va attached devlines line rpath rmm rkname rwwid rmpath rslaves netsrc
+    while read -r pvc; do
+        [[ -z "${pvc}" ]] && continue
+        pv="${PV_OF_PVC[${pvc}]}"
+        if [[ -z "${pv}" ]]; then
+            {
+                echo "PVC: ${pvc}"
+                echo "  (no bound PV found)"
+                echo ""
+            } >> "${report}"
+            printf '%s\t\t\t\t\t\t\t\t\t\t\t\t\t\n' "${pvc}" >> "${tsv}"
+            continue
+        fi
+
+        sc=$(timeout 30 /usr/bin/oc get pv "${pv}" --request-timeout=30s -o jsonpath='{.spec.storageClassName}' 2>/dev/null)
+        driver=$(timeout 30 /usr/bin/oc get pv "${pv}" --request-timeout=30s -o jsonpath='{.spec.csi.driver}' 2>/dev/null)
+        vh=$(timeout 30 /usr/bin/oc get pv "${pv}" --request-timeout=30s -o jsonpath='{.spec.csi.volumeHandle}' 2>/dev/null)
+        mode=$(timeout 30 /usr/bin/oc get pv "${pv}" --request-timeout=30s -o jsonpath='{.spec.volumeMode}' 2>/dev/null)
+        va=$(echo "${va_json}" | jq -r --arg pv "${pv}" --arg node "${INCIDENT_NODE}" \
+            '.items[]? | select(.spec.source.persistentVolumeName==$pv and .spec.nodeName==$node) | .metadata.name' 2>/dev/null | head -1)
+        attached=$(echo "${va_json}" | jq -r --arg pv "${pv}" --arg node "${INCIDENT_NODE}" \
+            '.items[]? | select(.spec.source.persistentVolumeName==$pv and .spec.nodeName==$node) | .status.attached' 2>/dev/null | head -1)
+
+        {
+            echo "PVC: ${pvc}"
+            echo "  PV:               ${pv}"
+            echo "  StorageClass:     ${sc:-<none>}"
+            echo "  CSI driver:       ${driver:-<non-csi>}"
+            echo "  volumeHandle:     ${vh:-<none>}"
+            echo "  volumeMode:       ${mode:-<none>}"
+            echo "  VolumeAttachment: ${va:-<none>} (attached=${attached:-unknown})"
+        } >> "${report}"
+
+        devlines="${DEVROWS[${pv}]}"
+        netsrc="${NETROWS[${pv}]}"
+        if [[ -n "${devlines}" ]]; then
+            echo "  Host block device(s) on ${INCIDENT_NODE} (names are point-in-time):" >> "${report}"
+            while IFS=$'\t' read -r _key rpath rmm rkname rwwid rmpath rslaves; do
+                [[ -z "${rkname}" ]] && continue
+                {
+                    if [[ -n "${rwwid}" ]]; then
+                        echo "    - WWID/UUID:      ${rwwid}   <- stable correlation key"
+                    else
+                        echo "    - WWID/UUID:      <unavailable — sd*/dm-* names below are the only handle>"
+                    fi
+                    echo "        kernel device:  ${rkname}  (${rpath}, ${rmm}) [as of collection]"
+                    [[ -n "${rmpath}" ]] && echo "        multipath name: ${rmpath}"
+                    if [[ -n "${rslaves}" ]]; then
+                        local -a _paths
+                        read -ra _paths <<< "${rslaves}"
+                        echo "        SCSI paths:     ${rslaves} (1:${#_paths[@]} multipath fan-out)"
+                    fi
+                    echo "        → metrics: node_disk_info{wwn=\"${rwwid:-?}\"} to find the"
+                    echo "          incident-time device label, then disk_io_time_by_device /"
+                    echo "          disk_*_latency for that device (dm-* aggregate + each sd* path)."
+                } >> "${report}"
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                    "${pvc}" "${pv}" "${sc}" "${driver}" "${vh}" "${mode}" "${va}" "${attached}" \
+                    "${rkname}" "${rpath}" "${rmm}" "${rwwid}" "${rmpath}" "${rslaves}" >> "${tsv}"
+            done <<< "${devlines}"
+        elif [[ -n "${netsrc}" ]]; then
+            echo "  Network/file-backed volume (no host block device):" >> "${report}"
+            while IFS= read -r line; do
+                [[ -z "${line}" ]] && continue
+                echo "    - source: ${line}" >> "${report}"
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t\t%s\t\t\t\t\n' \
+                    "${pvc}" "${pv}" "${sc}" "${driver}" "${vh}" "${mode}" "${va}" "${attached}" "${line}" >> "${tsv}"
+            done <<< "${netsrc}"
+        else
+            if [[ -n "${NODE_GATHER_POD}" ]]; then
+                echo "  Host block device: NOT RESOLVED (volume may be detached, or CSI layout unrecognized)" >> "${report}"
+            else
+                echo "  Host block device: not resolved (node-gather pod unavailable)" >> "${report}"
+            fi
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t\t\t\t\t\t\n' \
+                "${pvc}" "${pv}" "${sc}" "${driver}" "${vh}" "${mode}" "${va}" "${attached}" >> "${tsv}"
+        fi
+        echo "" >> "${report}"
+    done <<< "${pvcs}"
+
+    # Machine-readable JSON (one record per PVC/host-device pair)
+    jq -R -s '
+        split("\n") | map(select(length > 0)) | map(split("\t")) |
+        map({
+            pvc: .[0], pv: .[1], storageClass: .[2], csiDriver: .[3],
+            volumeHandle: .[4], volumeMode: .[5], volumeAttachment: .[6], attached: .[7],
+            hostDevice: {
+                kname: .[8], path: .[9], majorMinor: .[10], wwid: .[11],
+                multipathName: .[12],
+                underlyingPaths: (.[13] // "" | split(" ") | map(select(length > 0)))
+            }
+        })
+    ' "${tsv}" > "${json_out}" 2>/dev/null || echo "[]" > "${json_out}"
+
+    rm -f "${tsv}"
+    collected "storage device mapping: PVC/PV -> volumeHandle -> host block device (dm/sd/WWID)"
+    set -x
+}
+
 # --- Node Discovery via PromQL ---
 echo "Discovering node for VM ${VM} in namespace ${NS} at incident time..."
 
@@ -252,6 +534,14 @@ else
 fi
 
 wait
+
+# Map VM storage to host block devices while the node-gather pod is still alive
+# (needs on-node access to /dev, multipath, and the kubelet CSI publish paths).
+if check_timeout; then
+    collect_storage_device_mapping
+else
+    skipped "storage device mapping (timeout reached before collection)"
+fi
 
 # Clean up node-gather (runs now, disarm the EXIT trap)
 cleanup_node_gather
@@ -609,6 +899,8 @@ echo "  Kernel flags:   nodes/${INCIDENT_NODE}/kernel_red_flags.log"
 echo "  Cluster health: cluster-scoped-resources/{cluster_operators,nodes_overview,machineconfigpools,top_node}"
 echo "  VM/VMI:         namespaces/${NS}/kubevirt.io/"
 echo "  Storage chain:  PVCs, PVs, StorageClasses, DataVolumes, VolumeAttachments"
+echo "  Device mapping: namespaces/${NS}/vms/${VM}/storage-device-mapping.{txt,json}"
+echo "  Node devices:   nodes/${INCIDENT_NODE}/{block_devices,multipath,dev_disk_by_id,pv_device_resolution}"
 echo "  Metrics:        incident-metrics/"
 echo "  Pod logs:       namespaces/${NS}/core/pods/"
 if [[ -d "${BASE_COLLECTION_PATH}/namespaces/${NS}/vms/${VM}" ]]; then

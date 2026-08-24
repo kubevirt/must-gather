@@ -261,6 +261,31 @@ Everything below is scoped to the incident node and time window — no cluster-w
 - VolumeAttachments for the incident node
 - Namespace events (FailedAttach, FailedMount, etc.)
 
+**Storage device mapping** (`namespaces/<ns>/vms/<vm>/storage-device-mapping.{txt,json}`)
+
+Bridges each VM volume to the physical block device on the incident node, so support can
+attribute node-wide storage events (multipath path flap, high `disk_io_util`, dm/sd latency)
+to the specific VM instead of flagging it as an unresolvable gap. The full chain:
+
+```
+PVC → PV → csi.volumeHandle → host dm-*/sd* device → WWID / multipath name / underlying SCSI paths
+```
+
+The host device is resolved on the node (via the node-gather pod) through the kubelet CSI
+publish/staging path for block-mode volumes, and the kubelet mount table for filesystem-mode
+volumes — matched by device major:minor, so it works regardless of how the CSI driver named
+the device. Network/file-backed volumes (e.g. NFS) are reported with their source instead of a
+block device. Supporting raw node inventory is written under `nodes/<node>/`:
+
+- `block_devices`, `block_devices.json` — `lsblk` with `WWN`, `SERIAL`, `HCTL`
+- `multipath` — `multipath -ll` (device-mapper multipath topology and WWIDs)
+- `dev_disk_by_id`, `dev_disk_by_path` — stable device link tables
+- `dmsetup` — device-mapper tree
+- `pv_device_resolution` — raw per-PV → device resolution records
+
+Each mapping lists the `device="dm-*"` label to use when filtering the node metrics in
+`incident-metrics/`, closing the loop from a VM to a node-wide I/O event.
+
 **Pod logs** (`namespaces/<ns>/core/pods/`)
 - virt-launcher pod: all containers, current and previous logs (captures crash output)
 - virt-handler pod on the incident node: current and previous logs
@@ -281,15 +306,22 @@ reflect the new instance, not the crash:
   `cpu.stat` (throttled time), `cpu.max`
 
 **Performance metrics** (`incident-metrics/`)
-- 26 Prometheus metrics exported in OpenMetrics format over the incident window (30 s step),
+- 28 Prometheus metrics exported in OpenMetrics format over the incident window (30 s step),
   covering VM, node, storage, and alert categories:
 
   | Category | Metrics |
   |---|---|
   | VM | CPU usage rate, resident memory, swap-in traffic, network TX/RX bytes and errors, disk read/write bytes and latency |
   | Node | CPU usage, available memory, CPU/memory/I/O pressure (PSI), disk I/O utilization, 1-min load average, network receive errors |
-  | Storage | PV usage %, volume mount duration, volume access-control duration |
+  | Storage | PV usage %, volume mount/access-control duration, per-device I/O utilization, read/write latency, in-flight queue depth, and `node_disk_info` (device↔WWID map) |
   | Alerts | All firing KubeVirt alerts at incident time |
+
+  The `node_disk_info` series is what makes the storage device mapping usable historically:
+  the `dm-*`/`sd*` names in `storage-device-mapping.txt` are resolved at collection time, but
+  a multipath device is 1:N over its SCSI paths and those kernel names can be reassigned across
+  a rescan or reboot. `node_disk_info{wwn=...}` records the device↔WWID association **as scraped
+  at incident time**, so a stable WWID can always be mapped back to the incident-time `device`
+  label used by the per-device I/O and latency metrics.
 
 - `metrics-metadata.json` — which metrics were collected, which were skipped (with reasons),
   time window, and query step
