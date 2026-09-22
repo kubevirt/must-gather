@@ -6,7 +6,7 @@ export PROS=${PROS:-5}
 export INSTALLATION_NAMESPACE=${INSTALLATION_NAMESPACE:-kubevirt-hyperconverged}
 
 # Shared kernel red-flag grep pattern — used by gather_nodes and gather_vm_incident
-export KERNEL_REDFLAG_PATTERN='nfs:|NFS |nfs |NFSERR|server not responding|zero writ|call_transmit|cb path stale|not responding for|qemu|QEMU|Out of memory|oom-kill|Killed process.*qemu|task .* blocked|blocked for more than|stuck for|jiffies'
+export KERNEL_REDFLAG_PATTERN='nfs:|NFS |nfs |NFSERR|server not responding|zero writ|call_transmit|cb path stale|not responding for|qemu|QEMU|Out of memory|oom-kill|Killed process.*qemu|task .* blocked|blocked for more than|stuck for|jiffies|multipath|device-mapper: multipath|failing path|reinstating path|remaining active paths|marginal path|Buffer I/O error|blk_update_request|I/O error, dev|rejecting I/O to offline device|scsi_eh|SCSI error|rport-.* blocked|FC remote port'
 
 function check_command {
     if [[ -z "$USR_BIN_GATHER" ]]; then

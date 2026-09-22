@@ -1301,6 +1301,69 @@ var _ = Describe("validate the must-gather output", func() {
 			}
 		})
 
+		It("should map VM storage to host block devices", func() {
+			// Derive the VM name from the archive (vms/<vm>/), matching the other
+			// incident tests — the outer scope only exposes namespace and dir.
+			vmsBaseDir := path.Join(incidentDir, "namespaces", incidentNs, "vms")
+			vmEntries, err := os.ReadDir(vmsBaseDir)
+			if err != nil || len(vmEntries) == 0 {
+				logger.Printf("  no vms/ directory (VM may not have per-VM artifacts)")
+				return
+			}
+			incidentVM := vmEntries[0].Name()
+
+			vmDir := path.Join(vmsBaseDir, incidentVM)
+			mappingTxt := path.Join(vmDir, "storage-device-mapping.txt")
+			mappingJSON := path.Join(vmDir, "storage-device-mapping.json")
+
+			// The mapping is only produced when the VM has PVCs. Skip gracefully otherwise.
+			if _, err := os.Stat(mappingTxt); os.IsNotExist(err) {
+				logger.Printf("  no storage-device-mapping.txt (VM may not use persistent storage)")
+				return
+			}
+
+			info, statErr := os.Stat(mappingTxt)
+			Expect(statErr).ToNot(HaveOccurred(), "storage-device-mapping.txt should exist")
+			Expect(info.Size()).To(BeNumerically(">", 0), "storage-device-mapping.txt should not be empty")
+
+			// JSON must be present and parseable so downstream tooling can consume it.
+			data, err := os.ReadFile(mappingJSON)
+			Expect(err).ToNot(HaveOccurred(), "storage-device-mapping.json should exist")
+			var records []struct {
+				PVC          string `json:"pvc"`
+				PV           string `json:"pv"`
+				VolumeHandle string `json:"volumeHandle"`
+				HostDevice   struct {
+					Kname           string   `json:"kname"`
+					WWID            string   `json:"wwid"`
+					UnderlyingPaths []string `json:"underlyingPaths"`
+				} `json:"hostDevice"`
+			}
+			Expect(json.Unmarshal(data, &records)).To(Succeed(), "storage-device-mapping.json should be valid JSON")
+			logger.Printf("  storage-device-mapping records: %d", len(records))
+			for _, r := range records {
+				logger.Printf("    PVC %s -> PV %s -> handle=%q -> device=%q wwid=%q paths=%v",
+					r.PVC, r.PV, r.VolumeHandle, r.HostDevice.Kname, r.HostDevice.WWID, r.HostDevice.UnderlyingPaths)
+			}
+
+			// Node-side block inventory is best-effort (depends on the node-gather pod and
+			// storage backend); log what landed rather than failing on absence.
+			nodesBaseDir := path.Join(incidentDir, "nodes")
+			if nodeEntries, err := os.ReadDir(nodesBaseDir); err == nil {
+				for _, ne := range nodeEntries {
+					if !ne.IsDir() {
+						continue
+					}
+					nodeDir := path.Join(nodesBaseDir, ne.Name())
+					for _, f := range []string{"block_devices", "multipath", "dev_disk_by_id", "pv_device_resolution"} {
+						if fi, err := os.Stat(path.Join(nodeDir, f)); err == nil && fi.Size() > 0 {
+							logger.Printf("  node %s block inventory present: %s", ne.Name(), f)
+						}
+					}
+				}
+			}
+		})
+
 		It("should not leak ServiceAccount tokens or bearer credentials into the archive", func() {
 			// The Prometheus query functions use a ServiceAccount token. If set -x
 			// fires at the wrong time or stderr is misdirected, the Authorization
