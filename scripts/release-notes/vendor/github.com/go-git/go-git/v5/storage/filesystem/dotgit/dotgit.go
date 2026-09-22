@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v5/internal/pathutil"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/hash"
 	"github.com/go-git/go-git/v5/storage"
@@ -72,7 +73,58 @@ var (
 	// ErrIsDir is returned when a reference file is attempting to be read,
 	// but the path specified is a directory.
 	ErrIsDir = errors.New("reference path is a directory")
+	// ErrEmptyRefFile is returned when a reference file is attempted to be read,
+	// but the file is empty
+	ErrEmptyRefFile = errors.New("ref file is empty")
+	// ErrModuleNameEscape is returned when a submodule name would
+	// resolve outside the modules/ subtree, mirroring canonical Git's
+	// "ignoring suspicious submodule name" defence.
+	ErrModuleNameEscape = errors.New("submodule name escapes modules/ directory")
+	// ErrReferenceNameEscape is returned when a reference name would
+	// resolve outside its reference sub-tree once turned into a path
+	// under the .git directory (e.g. a name with a ".." component).
+	ErrReferenceNameEscape = errors.New("reference name escapes the reference storage")
 )
+
+// isPathSep reports whether r is a path separator in reference names.
+// It treats both '/' and '\\' as separators to harden against cross-OS paths.
+func isPathSep(r rune) bool { return r == '/' || r == '\\' }
+
+// validReferenceName rejects reference names that cannot be safely turned into
+// a path under the .git directory. A loose reference is stored verbatim at
+// ".git/<name>", so a crafted name — for instance one advertised by a malicious
+// remote — could climb out of its reference sub-tree and read, overwrite, or
+// delete unrelated metadata such as .git/config.
+//
+// The storage-safety gate is plumbing.ReferenceName.IsSafe, mirroring Git's
+// refname_is_safe: a name must be under refs/ without escaping it, or be a
+// [A-Z_] pseudo-ref. This alone rejects absolute, drive-prefixed, escaping and
+// single-level metadata names. On top of it, this adds filesystem-specific
+// hardening that IsSafe's literal check does not cover: control characters, and
+// components a case-insensitive/NTFS/HFS+ filesystem would fold back to "." or
+// ".." (trailing dots/spaces, Alternate Data Streams, ignorable Unicode code
+// points), delegated to pathutil.IsHFSDot and pathutil.IsNTFSDot with "." as
+// the needle — as validSubmoduleName does — and run regardless of host OS.
+func validReferenceName(name plumbing.ReferenceName) error {
+	if !name.IsSafe() {
+		return fmt.Errorf("%w: %q is not under refs/ nor a valid pseudo-ref", ErrReferenceNameEscape, string(name))
+	}
+
+	s := string(name)
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return fmt.Errorf("%w: %q", ErrReferenceNameEscape, s)
+		}
+	}
+	for _, part := range strings.FieldsFunc(s, isPathSep) {
+		// IsNTFSDot/IsHFSDot with a "." needle match ".." and its disguises
+		// but not a bare ".", so reject that component explicitly too.
+		if part == "." || pathutil.IsHFSDot(part, ".") || pathutil.IsNTFSDot(part, ".", "") {
+			return fmt.Errorf("%w: %q", ErrReferenceNameEscape, s)
+		}
+	}
+	return nil
+}
 
 // Options holds configuration for the storage.
 type Options struct {
@@ -249,7 +301,7 @@ func (d *DotGit) objectPacks() ([]plumbing.Hash, error) {
 			continue
 		}
 
-		h := plumbing.NewHash(n[5 : len(n)-5]) //pack-(hash).pack
+		h := plumbing.NewHash(n[5 : len(n)-5]) // pack-(hash).pack
 		if h.IsZero() {
 			// Ignore files with badly-formatted names.
 			continue
@@ -661,18 +713,33 @@ func (d *DotGit) readReferenceFrom(rd io.Reader, name string) (ref *plumbing.Ref
 		return nil, err
 	}
 
+	if len(b) == 0 {
+		return nil, ErrEmptyRefFile
+	}
+
 	line := strings.TrimSpace(string(b))
 	return plumbing.NewReferenceFromStrings(name, line), nil
 }
 
+// checkReferenceAndTruncate reads the reference from the given file, or the `pack-refs` file if
+// the file was empty. Then it checks that the old reference matches the stored reference and
+// truncates the file.
 func (d *DotGit) checkReferenceAndTruncate(f billy.File, old *plumbing.Reference) error {
 	if old == nil {
 		return nil
 	}
+
 	ref, err := d.readReferenceFrom(f, old.Name().String())
+	if errors.Is(err, ErrEmptyRefFile) {
+		// This may happen if the reference is being read from a newly created file.
+		// In that case, try getting the reference from the packed refs file.
+		ref, err = d.packedRef(old.Name())
+	}
+
 	if err != nil {
 		return err
 	}
+
 	if ref.Hash() != old.Hash() {
 		return storage.ErrReferenceHasChanged
 	}
@@ -684,6 +751,10 @@ func (d *DotGit) checkReferenceAndTruncate(f billy.File, old *plumbing.Reference
 }
 
 func (d *DotGit) SetRef(r, old *plumbing.Reference) error {
+	if err := validReferenceName(r.Name()); err != nil {
+		return err
+	}
+
 	var content string
 	switch r.Type() {
 	case plumbing.SymbolicReference:
@@ -701,7 +772,11 @@ func (d *DotGit) SetRef(r, old *plumbing.Reference) error {
 // Symbolic references are resolved and included in the output.
 func (d *DotGit) Refs() ([]*plumbing.Reference, error) {
 	var refs []*plumbing.Reference
-	var seen = make(map[plumbing.ReferenceName]bool)
+	seen := make(map[plumbing.ReferenceName]bool)
+	if err := d.addRefFromHEAD(&refs); err != nil {
+		return nil, err
+	}
+
 	if err := d.addRefsFromRefDir(&refs, seen); err != nil {
 		return nil, err
 	}
@@ -710,15 +785,15 @@ func (d *DotGit) Refs() ([]*plumbing.Reference, error) {
 		return nil, err
 	}
 
-	if err := d.addRefFromHEAD(&refs); err != nil {
-		return nil, err
-	}
-
 	return refs, nil
 }
 
 // Ref returns the reference for a given reference name.
 func (d *DotGit) Ref(name plumbing.ReferenceName) (*plumbing.Reference, error) {
+	if err := validReferenceName(name); err != nil {
+		return nil, err
+	}
+
 	ref, err := d.readReferenceFile(".", name.String())
 	if err == nil {
 		return ref, nil
@@ -782,6 +857,10 @@ func (d *DotGit) packedRef(name plumbing.ReferenceName) (*plumbing.Reference, er
 
 // RemoveRef removes a reference by name.
 func (d *DotGit) RemoveRef(name plumbing.ReferenceName) error {
+	if err := validReferenceName(name); err != nil {
+		return err
+	}
+
 	path := d.fs.Join(".", name.String())
 	_, err := d.fs.Stat(path)
 	if err == nil {
@@ -815,7 +894,8 @@ func (d *DotGit) addRefsFromPackedRefsFile(refs *[]*plumbing.Reference, f billy.
 }
 
 func (d *DotGit) openAndLockPackedRefs(doCreate bool) (
-	pr billy.File, err error) {
+	pr billy.File, err error,
+) {
 	var f billy.File
 	defer func() {
 		if err != nil && f != nil {
@@ -1020,7 +1100,7 @@ func (d *DotGit) readReferenceFile(path, name string) (ref *plumbing.Reference, 
 
 func (d *DotGit) CountLooseRefs() (int, error) {
 	var refs []*plumbing.Reference
-	var seen = make(map[plumbing.ReferenceName]bool)
+	seen := make(map[plumbing.ReferenceName]bool)
 	if err := d.addRefsFromRefDir(&refs, seen); err != nil {
 		return 0, err
 	}
@@ -1108,9 +1188,20 @@ func (d *DotGit) PackRefs() (err error) {
 	return nil
 }
 
-// Module return a billy.Filesystem pointing to the module folder
+// Module returns a billy.Filesystem pointing to the module folder.
+//
+// As a defence in depth against submodule name path traversal,
+// refuse names whose joined path leaves the modules/ subtree once
+// cleaned. The config-layer parser also validates submodule names,
+// but Module may be reached from any caller that constructs a
+// Submodule struct programmatically and so bypasses the parser.
 func (d *DotGit) Module(name string) (billy.Filesystem, error) {
-	return d.fs.Chroot(d.fs.Join(modulePath, name))
+	p := d.fs.Join(modulePath, name)
+	cleaned := path.Clean(filepath.ToSlash(p))
+	if cleaned != modulePath && !strings.HasPrefix(cleaned, modulePath+"/") {
+		return nil, ErrModuleNameEscape
+	}
+	return d.fs.Chroot(p)
 }
 
 func (d *DotGit) AddAlternate(remote string) error {
