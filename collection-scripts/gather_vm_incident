@@ -3,6 +3,94 @@
 DIR_NAME=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 source "${DIR_NAME}/common.sh"
 check_command
+export OC_BIN="${OC_BIN:-/usr/bin/oc}"
+export INCIDENT_VIRSH_RETRY_ATTEMPTS="${INCIDENT_VIRSH_RETRY_ATTEMPTS:-3}"
+export INCIDENT_VIRSH_RETRY_DELAY="${INCIDENT_VIRSH_RETRY_DELAY:-2}"
+
+# Incident collection must retain the launcher that predates the incident. If
+# that pod is replaced, collecting from its successor would describe a new VM
+# instance rather than the incident.
+wait_for_ready_incident_launcher() {
+    local pod=$1
+    local namespace=$2
+    local attempt
+
+    for ((attempt = 1; attempt <= INCIDENT_VIRSH_RETRY_ATTEMPTS; attempt++)); do
+        if timeout 35 "${OC_BIN}" wait -n "${namespace}" --for=condition=Ready "pod/${pod}" --timeout=30s; then
+            return 0
+        fi
+
+        echo "virt-launcher pod ${namespace}/${pod} is not ready or was replaced (attempt ${attempt}/${INCIDENT_VIRSH_RETRY_ATTEMPTS})" >&2
+        if (( attempt < INCIDENT_VIRSH_RETRY_ATTEMPTS )); then
+            sleep "${INCIDENT_VIRSH_RETRY_DELAY}"
+        fi
+    done
+
+    return 1
+}
+
+# Preserve diagnostics and retry transient libvirt failures without replacing
+# the incident-era launcher pod.
+collect_incident_virsh_output() {
+    local output_path=$1
+    shift
+    local attempt attempt_path
+    attempt_path="${output_path}.attempt"
+
+    for ((attempt = 1; attempt <= INCIDENT_VIRSH_RETRY_ATTEMPTS; attempt++)); do
+        if timeout 30 "${OC_BIN}" exec "$@" > "${attempt_path}" 2>&1 && [[ -s "${attempt_path}" ]]; then
+            mv "${attempt_path}" "${output_path}"
+            return 0
+        fi
+
+        echo "virsh command failed or returned no output for ${output_path} (attempt ${attempt}/${INCIDENT_VIRSH_RETRY_ATTEMPTS})" >&2
+        if [[ -s "${attempt_path}" ]]; then
+            cat "${attempt_path}" >&2
+        fi
+        if (( attempt < INCIDENT_VIRSH_RETRY_ATTEMPTS )); then
+            sleep "${INCIDENT_VIRSH_RETRY_DELAY}"
+        fi
+    done
+
+    {
+        echo "ERROR: virsh command failed or returned no output after ${INCIDENT_VIRSH_RETRY_ATTEMPTS} attempts."
+        if [[ -s "${attempt_path}" ]]; then
+            cat "${attempt_path}"
+        fi
+    } > "${output_path}"
+    rm -f "${attempt_path}"
+    return 1
+}
+
+collect_incident_virsh_data() {
+    local pod=$1
+    local namespace=$2
+    local vmname=$3
+    local vm_detail_path=$4
+
+    if ! wait_for_ready_incident_launcher "${pod}" "${namespace}"; then
+        skipped "virsh/QEMU data (incident-era virt-launcher pod was not ready or was replaced)"
+        echo "  WARNING: Incident-era virt-launcher pod is not ready or was replaced. Skipping live VM state."
+        echo "ERROR: incident-era virt-launcher pod ${pod} did not become Ready; live VM state was not collected." \
+            > "${vm_detail_path}/${pod}.virsh-collection.error.txt"
+        return 1
+    fi
+
+    collected "virsh dumpxml, domblklist, domjobinfo, domstats, domblkerror, list, serial console, QEMU logs, cgroup stats (VM has not restarted)"
+    echo "  Pod predates incident and is Ready - collecting live VM state..."
+
+    collect_incident_virsh_output "${vm_detail_path}/${pod}.dumpxml.xml" "${pod}" -n "${namespace}" -c compute -- virsh -r dumpxml "${namespace}_${vmname}" || true
+    collect_incident_virsh_output "${vm_detail_path}/${pod}.domblklist" "${pod}" -n "${namespace}" -c compute -- virsh -r domblklist "${namespace}_${vmname}" || true
+    collect_incident_virsh_output "${vm_detail_path}/${pod}.domjobinfo" "${pod}" -n "${namespace}" -c compute -- virsh -r domjobinfo "${namespace}_${vmname}" || true
+    collect_incident_virsh_output "${vm_detail_path}/${pod}.list" "${pod}" -n "${namespace}" -c compute -- virsh -r list --all || true
+    collect_incident_virsh_output "${vm_detail_path}/${pod}.domstats" "${pod}" -n "${namespace}" -c compute -- virsh -r domstats "${namespace}_${vmname}" || true
+    collect_incident_virsh_output "${vm_detail_path}/${pod}.domblkerror" "${pod}" -n "${namespace}" -c compute -- virsh -r domblkerror "${namespace}_${vmname}" || true
+}
+
+if [[ "${GATHER_VM_INCIDENT_LIBRARY:-}" == "true" ]]; then
+    return 0
+fi
+
 "${DIR_NAME}"/version
 
 INCIDENT_TIMEOUT=${INCIDENT_TIMEOUT:-600}
@@ -434,29 +522,11 @@ if [[ -n "${LAUNCHER_POD}" ]]; then
     pod_start=$(timeout 30 /usr/bin/oc get pod "${LAUNCHER_POD}" -n "${NS}" -o jsonpath='{.status.startTime}' 2>/dev/null)
     pod_start_epoch=$(date -d "${pod_start}" +%s 2>/dev/null)
     if [[ -n "${pod_start_epoch}" ]] && [[ ${pod_start_epoch} -lt ${incident_epoch} ]]; then
-        collected "virsh dumpxml, domblklist, domjobinfo, domstats, domblkerror, list, serial console, QEMU logs, cgroup stats (VM has not restarted)"
-        echo "  Pod predates incident - VM has not restarted. Collecting live VM state..."
         # Write virsh data to namespaces/<ns>/vms/<vm>/ to match gather_vms_details structure
         VM_DETAIL_PATH="${BASE_COLLECTION_PATH}/namespaces/${NS}/vms/${VM}"
         mkdir -p "${VM_DETAIL_PATH}"
 
-        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r dumpxml "${NS}_${VM}" \
-            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.dumpxml.xml" 2>&1
-
-        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domblklist "${NS}_${VM}" \
-            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domblklist" 2>&1
-
-        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domjobinfo "${NS}_${VM}" \
-            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domjobinfo" 2>&1
-
-        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r list --all \
-            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.list" 2>&1
-
-        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domstats "${NS}_${VM}" \
-            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domstats" 2>&1
-
-        timeout 30 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- virsh -r domblkerror "${NS}_${VM}" \
-            > "${VM_DETAIL_PATH}/${LAUNCHER_POD}.domblkerror" 2>&1
+        if collect_incident_virsh_data "${LAUNCHER_POD}" "${NS}" "${VM}" "${VM_DETAIL_PATH}"; then
 
         # Cap QEMU log transfer at 50 MB to prevent archive bloat on long-running VMs
         timeout 60 /usr/bin/oc exec "${LAUNCHER_POD}" -n "${NS}" -c compute -- \
@@ -509,6 +579,7 @@ if [[ -n "${LAUNCHER_POD}" ]]; then
             for f in qemu-proc-status qemu-cgroup-stats; do
                 [[ -s "${VM_DETAIL_PATH}/${LAUNCHER_POD}.${f}" ]] || rm -f "${VM_DETAIL_PATH}/${LAUNCHER_POD}.${f}"
             done
+        fi
         fi
     else
         skipped "virsh/QEMU data (VM restarted after incident - data would reflect new instance)"

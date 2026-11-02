@@ -26,6 +26,10 @@ jobs:
          check_together: 'yes'
          version: v0.10.0
          scandir: './collection-scripts/'
+    - name: Test VM detail collection failure handling
+      run: bash tests/test_gather_vms_details.sh
+    - name: Test VM incident collection failure handling
+      run: bash tests/test_gather_vm_incident.sh
     - name: check vmConvertor
       run: |-
         cd cmd/vmConvertor
