@@ -8,14 +8,107 @@ get_log_collection_args
 export QEMULOGPATH_1="/var/log/libvirt/qemu/"
 export QEMULOGPATH_2="/var/run/libvirt/qemu/log/"
 export QEMULOGPATH_3="/var/run/kubevirt-private/libvirt/qemu/log/"
+export OC_BIN="${OC_BIN:-/usr/bin/oc}"
+export VIRSH_RETRY_ATTEMPTS="${VIRSH_RETRY_ATTEMPTS:-3}"
+export VIRSH_RETRY_DELAY="${VIRSH_RETRY_DELAY:-2}"
+
+# Find the current virt-launcher pod for a VMI and wait for its compute
+# container to be ready. A launcher can be replaced between the initial pod
+# listing and collection, so do not keep using the stale pod name.
+function wait_for_ready_virt_launcher() {
+  local ocproject=$1
+  local vmname=$2
+  local attempt ocvm
+
+  for ((attempt = 1; attempt <= VIRSH_RETRY_ATTEMPTS; attempt++)); do
+    ocvm=$(timeout 15 "${OC_BIN}" get pod -n "${ocproject}" -l kubevirt.io=virt-launcher \
+      --field-selector=status.phase=Running --no-headers \
+      -o custom-columns="NAME:.metadata.name,VM:.metadata.annotations.kubevirt\\.io/domain" 2>/dev/null \
+      | awk -v vm="${vmname}" '$2 == vm { print $1; exit }')
+
+    if [[ -n "${ocvm}" ]] && timeout 35 "${OC_BIN}" wait -n "${ocproject}" \
+      --for=condition=Ready "pod/${ocvm}" --timeout=30s > /dev/null; then
+      echo "${ocvm}"
+      return 0
+    fi
+
+    echo "virt-launcher pod for ${ocproject}/${vmname} is not ready (attempt ${attempt}/${VIRSH_RETRY_ATTEMPTS})" >&2
+    if (( attempt < VIRSH_RETRY_ATTEMPTS )); then
+      sleep "${VIRSH_RETRY_DELAY}"
+    fi
+  done
+
+  return 1
+}
+
+# Preserve stderr alongside stdout and retry transient libvirt failures. This
+# prevents a failed oc exec from being silently represented by an empty file.
+function collect_virsh_output() {
+  local output_path=$1
+  shift
+  local attempt attempt_path
+  attempt_path="${output_path}.attempt"
+
+  for ((attempt = 1; attempt <= VIRSH_RETRY_ATTEMPTS; attempt++)); do
+    if timeout 30 "${OC_BIN}" exec "$@" > "${attempt_path}" 2>&1 && [[ -s "${attempt_path}" ]]; then
+      mv "${attempt_path}" "${output_path}"
+      return 0
+    fi
+
+    echo "virsh command failed or returned no output for ${output_path} (attempt ${attempt}/${VIRSH_RETRY_ATTEMPTS})" >&2
+    if [[ -s "${attempt_path}" ]]; then
+      cat "${attempt_path}" >&2
+    fi
+    if (( attempt < VIRSH_RETRY_ATTEMPTS )); then
+      sleep "${VIRSH_RETRY_DELAY}"
+    fi
+  done
+
+  {
+    echo "ERROR: virsh command failed or returned no output after ${VIRSH_RETRY_ATTEMPTS} attempts."
+    if [[ -s "${attempt_path}" ]]; then
+      cat "${attempt_path}"
+    fi
+  } > "${output_path}"
+  rm -f "${attempt_path}"
+  return 1
+}
+
+function collect_blockjob_data() {
+  local output_path=$1
+  local domblklist_path=$2
+  local ocvm=$3
+  local ocproject=$4
+  local vmname=$5
+  local disk blockjob_collected=false
+
+  while IFS= read -r disk; do
+    collect_virsh_output "${output_path}.${disk}" "${ocvm}" -n "${ocproject}" -c compute -- \
+      virsh -r blockjob "${ocproject}_${vmname}" "${disk}" || true
+    cat "${output_path}.${disk}" >> "${output_path}"
+    rm -f "${output_path}.${disk}"
+    blockjob_collected=true
+  done < <(awk 'NR > 2 {print $2}' "${domblklist_path}")
+
+  if [[ "${blockjob_collected}" == false ]]; then
+    echo "No disks were returned by virsh domblklist; no blockjob data was collected." > "${output_path}"
+  fi
+}
 
 function gather_vm_info() {
   ocproject=$1
   ocvm=$2
   vmname=$3
+  requested_ocvm=${ocvm}
 
   vm_collection_path="${BASE_COLLECTION_PATH}/namespaces/${ocproject}/vms/${vmname}"
   mkdir -p "${vm_collection_path}"
+
+  if ! ocvm=$(wait_for_ready_virt_launcher "${ocproject}" "${vmname}"); then
+    echo "ERROR: no ready virt-launcher pod found for ${ocproject}/${vmname}; virsh data was not collected." \
+      > "${vm_collection_path}/${requested_ocvm}.virsh-collection.error.txt"
+    return 0
+  fi
 
   # shellcheck disable=SC2086
   /usr/bin/oc adm inspect ${log_collection_args} --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" pod "$ocvm"
@@ -23,27 +116,26 @@ function gather_vm_info() {
   /usr/bin/oc adm inspect ${log_collection_args} --dest-dir "${BASE_COLLECTION_PATH}" -n "${ocproject}" virtualmachineinstances "${vmname}"
 
   # VM : capabilities
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r capabilities  > "${vm_collection_path}/${ocvm}.capabilities.xml"
+  collect_virsh_output "${vm_collection_path}/${ocvm}.capabilities.xml" "${ocvm}" -n "${ocproject}" -c compute -- virsh -r capabilities || true
 
   # VM : domcapabilities
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh  domcapabilities  > "${vm_collection_path}/${ocvm}.domcapabilities.xml"
+  collect_virsh_output "${vm_collection_path}/${ocvm}.domcapabilities.xml" "${ocvm}" -n "${ocproject}" -c compute -- virsh domcapabilities || true
 
   # VM : list
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r list --all  > "${vm_collection_path}/${ocvm}.list.txt"
+  collect_virsh_output "${vm_collection_path}/${ocvm}.list.txt" "${ocvm}" -n "${ocproject}" -c compute -- virsh -r list --all || true
 
   # VM : dumpxml
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r dumpxml "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.dumpxml.xml"
+  collect_virsh_output "${vm_collection_path}/${ocvm}.dumpxml.xml" "${ocvm}" -n "${ocproject}" -c compute -- virsh -r dumpxml "${ocproject}_${vmname}" || true
 
   # VM : domblklist
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r domblklist "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.domblklist.txt"
+  collect_virsh_output "${vm_collection_path}/${ocvm}.domblklist.txt" "${ocvm}" -n "${ocproject}" -c compute -- virsh -r domblklist "${ocproject}_${vmname}" || true
 
   # VM : domjobinfo
-  /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r domjobinfo "${ocproject}_${vmname}" > "${vm_collection_path}/${ocvm}.domjobinfo.txt"
+  collect_virsh_output "${vm_collection_path}/${ocvm}.domjobinfo.txt" "${ocvm}" -n "${ocproject}" -c compute -- virsh -r domjobinfo "${ocproject}_${vmname}" || true
 
   # VM : blockjob
-  awk 'NR > 2 {print $2}' "${vm_collection_path}/${ocvm}.domblklist.txt" | while IFS= read -r disk; do
-    /usr/bin/oc exec "${ocvm}" -n "${ocproject}" -c compute -- virsh -r blockjob "${ocproject}_${vmname}" "${disk}" >> "${vm_collection_path}/${ocvm}.blockjob.txt"
-  done
+  collect_blockjob_data "${vm_collection_path}/${ocvm}.blockjob.txt" \
+    "${vm_collection_path}/${ocvm}.domblklist.txt" "${ocvm}" "${ocproject}" "${vmname}"
 
   # VM : QEMU logs
   # libvirt logs are already relayed to virt-launcher, and we capture the virt-launcher pod logs elsewhere. We are want the QEMU log here.
@@ -121,6 +213,15 @@ function get_vm_rule_tables() {
 export -f gather_vm_by_pod_name
 export -f gather_vm_info
 export -f get_vm_rule_tables
+export -f wait_for_ready_virt_launcher
+export -f collect_virsh_output
+export -f collect_blockjob_data
+
+# Allows local unit tests to source the collector helpers without starting a
+# collection. The gather entrypoint always executes this script directly.
+if [[ "${GATHER_VMS_DETAILS_LIBRARY:-}" == "true" ]]; then
+  return 0
+fi
 
 "${DIR_NAME}"/version
 
