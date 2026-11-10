@@ -287,12 +287,12 @@ reflect the new instance, not the crash:
   `cpu.stat` (throttled time), `cpu.max`
 
 **Performance metrics** (`incident-metrics/`)
-- 26 Prometheus metrics exported in OpenMetrics format over the incident window (30 s step),
+- Prometheus metrics exported in OpenMetrics format over the incident window (30 s step),
   covering VM, node, storage, and alert categories:
 
   | Category | Metrics |
   |---|---|
-  | VM | CPU usage rate, resident memory, swap-in traffic, network TX/RX bytes and errors, disk read/write bytes and latency |
+  | VM | CPU usage rate, resident memory, swap-in traffic, network TX/RX bytes and errors, disk read/write bytes, IOPS, and per-op latency |
   | Node | CPU usage, available memory, CPU/memory/I/O pressure (PSI), disk I/O utilization, 1-min load average, network receive errors |
   | Storage | PV usage %, volume mount duration, volume access-control duration |
   | Alerts | All firing KubeVirt alerts at incident time |
