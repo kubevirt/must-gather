@@ -15,7 +15,7 @@ You will get a dump of:
 - The Hyperconverged Cluster Operator namespaces (and its children objects)
 - All namespaces (and their children objects) that belong to any KubeVirt resources
 - All KubeVirt CRD's definitions
-- Per-node system and storage diagnostics (dmesg, dmidecode, sysctl, NFS config, PSI counters, kernel red-flag scan, virt-handler ghost records)
+- Per-node system and storage diagnostics (dmesg, dmidecode, sysctl, NFS config, PSI counters, kernel red-flag scan, virt-handler ghost records, coredumpctl list, qemu/libvirt coredumps)
 - CNV guest events (GuestPanicked, LivenessProbeFailed) across VM namespaces
 - Prometheus instant metrics (cluster utilization, VM phases, storage latencies, NFS counters)
 - ClusterRole definitions (cluster-reader posture, KubeVirt RBAC baseline)
