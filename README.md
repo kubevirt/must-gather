@@ -15,7 +15,7 @@ You will get a dump of:
 - The Hyperconverged Cluster Operator namespaces (and its children objects)
 - All namespaces (and their children objects) that belong to any KubeVirt resources
 - All KubeVirt CRD's definitions
-- Per-node system and storage diagnostics (dmesg, dmidecode, sysctl, NFS config, PSI counters, kernel red-flag scan, virt-handler ghost records, coredumpctl list, qemu/libvirt coredumps)
+- Per-node system and storage diagnostics (dmesg, dmidecode, sysctl, NFS config, PSI counters, kernel red-flag scan, virt-handler ghost records, coredumpctl list)
 - CNV guest events (GuestPanicked, LivenessProbeFailed) across VM namespaces
 - Prometheus instant metrics (cluster utilization, VM phases, storage latencies, NFS counters)
 - ClusterRole definitions (cluster-reader posture, KubeVirt RBAC baseline)
@@ -85,6 +85,7 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   > or more of the following parameters:
   --images
   --vms_details
+  --core_dumps
 
   > Incident collection for a specific VM at a known time.
   > Unlike a full must-gather, this collects ONLY data pertinent to the
@@ -231,6 +232,7 @@ Everything below is scoped to the incident node and time window — no cluster-w
 - `dmesg` — kernel ring buffer
 - Kernel red-flag scan — grep of `journalctl -k` for OOM kills, NFS errors, QEMU crashes,
   blocked tasks, and I/O stalls over the last 7 days
+- `coredumpctl list` / `coredump/`
 
 **Hardware and system configuration** (`nodes/<node>/`)
 - `dmidecode` — CPU microcode revision, BIOS version, memory DIMM layout

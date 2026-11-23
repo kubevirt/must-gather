@@ -247,6 +247,7 @@ timeout 120 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" node/"$
 if [[ -n "${NODE_GATHER_POD}" ]]; then
     echo "Collecting node diagnostics..."
     USR_BIN_GATHER=1 TARGET_NODE="${INCIDENT_NODE}" NODE_GATHER_POD="${NODE_GATHER_POD}" \
+        COLLECT_COREDUMPS=1 \
         "${DIR_NAME}/gather_nodes"
 else
     echo "WARNING: No node-gather pod available, skipping node diagnostics."
