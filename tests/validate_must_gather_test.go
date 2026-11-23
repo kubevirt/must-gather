@@ -261,6 +261,12 @@ var _ = Describe("validate the must-gather output", func() {
 				}
 				totalFound += found
 				logger.Printf("  node %s: %d/%d optional diagnostic files present", node.Name(), found, len(optionalDiagFiles))
+
+				Expect(fileInDir(nodeFiles, "coredumpctl_list")).To(BeTrue(),
+					"node %s should contain coredumpctl_list", node.Name())
+				_, err = os.Stat(path.Join(nodeDir, "coredump"))
+				Expect(os.IsNotExist(err)).To(BeTrue(),
+					"default gather must not archive coredumps on node %s", node.Name())
 			}
 			Expect(nodeDirCount).To(BeNumerically(">", 0), "nodes/ should contain at least one node directory")
 			Expect(totalFound).To(BeNumerically(">", 0), "at least some diagnostic files should be collected across all nodes")
@@ -772,6 +778,7 @@ var _ = Describe("validate the must-gather output", func() {
 				"dmidecode", "lspci", "cmdline", "sysctl", "chrony", "ip_addr",
 				"nfs_module_params", "tuned_active_profile", "tuned_modprobe",
 				"nfs.conf", "nfs_modprobe", "kernel_red_flags.log",
+				"coredumpctl_list",
 			}
 			for _, opt := range optionalNodeFiles {
 				if fileInDir(nodeFiles, opt) {

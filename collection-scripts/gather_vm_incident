@@ -247,6 +247,7 @@ timeout 120 /usr/bin/oc adm inspect --dest-dir "${BASE_COLLECTION_PATH}" node/"$
 if [[ -n "${NODE_GATHER_POD}" ]]; then
     echo "Collecting node diagnostics..."
     USR_BIN_GATHER=1 TARGET_NODE="${INCIDENT_NODE}" NODE_GATHER_POD="${NODE_GATHER_POD}" \
+        COLLECT_COREDUMPS=1 \
         "${DIR_NAME}/gather_nodes"
 else
     echo "WARNING: No node-gather pod available, skipping node diagnostics."
@@ -259,7 +260,7 @@ cleanup_node_gather
 trap - EXIT
 
 # Report what gather_nodes actually collected
-NODE_DIAG_FILES=(dmesg dmidecode lspci cmdline mountstats diskstats pressure_io pressure_memory pressure_cpu df mounts sysctl nfs_module_params tuned_active_profile tuned_modprobe nfs.conf nfs_modprobe chrony ip_addr kernel_red_flags.log nfs_sysctl nfs_sysfs nfs_slot_tuning_service nfs_mountstats_delays bridge vlan nftables sys_sriov_numvfs sys_sriov_totalvfs dev_vfio opt-cni-bin var-lib-cni-bin pcidp_config.json audit.log)
+NODE_DIAG_FILES=(dmesg dmidecode lspci cmdline mountstats diskstats pressure_io pressure_memory pressure_cpu df mounts sysctl nfs_module_params tuned_active_profile tuned_modprobe nfs.conf nfs_modprobe chrony ip_addr kernel_red_flags.log nfs_sysctl nfs_sysfs nfs_slot_tuning_service nfs_mountstats_delays bridge vlan nftables sys_sriov_numvfs sys_sriov_totalvfs dev_vfio opt-cni-bin var-lib-cni-bin pcidp_config.json audit.log coredumpctl_list)
 local_collected=()
 local_skipped=()
 for f in "${NODE_DIAG_FILES[@]}"; do

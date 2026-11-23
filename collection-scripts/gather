@@ -58,6 +58,9 @@ function parse_flags {
       --virtio_win_driver_check)
         requested_scripts+=("virtio_driver_check")
         ;;
+      --core_dumps)
+        export COLLECT_COREDUMPS=1
+        ;;
       --vm-incident)
         VM_INCIDENT=true
         ;;
@@ -103,7 +106,7 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
   --virtio_win_driver_check   Check Windows VMs for outdated VirtIO drivers
     Scope with NS and VM env vars (same as --vms_details and --vm-incident).
     NS only: check all VMs in namespace. Neither: check all running VMs.
-
+  --core_dumps
   > Incident collection for a specific VM at a known time.
   > Unlike a full must-gather, this collects ONLY data pertinent to the
   > incident: right VM, right node, right time window. No cluster-wide
@@ -113,7 +116,7 @@ Usage: oc adm must-gather --image=quay.io/kubevirt/must-gather -- /usr/bin/gathe
     Automatically identifies the node via Prometheus metrics and collects:
     - Host: dmesg, journal, kubelet, dmidecode, sysctl, chrony, ip config,
       storage diagnostics (mountstats, diskstats, PSI), NFS config, kernel red-flags,
-      virt-handler ghost records
+      virt-handler ghost records, coredumpctl list
     - Cluster: ClusterOperators, nodes, MachineConfigPools, KubeVirt version,
       VMIs on incident node (noisy-neighbor detection)
     - VM: definitions, PVC/PV/StorageClass/DataVolume chain, namespace events
